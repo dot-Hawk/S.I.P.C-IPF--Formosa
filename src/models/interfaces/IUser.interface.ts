@@ -1,4 +1,4 @@
-import { Document } from "mongoose";
+import {type Document } from "mongoose";
 
 type Role = "ENCUESTADOR" | "SUPERVISOR" | "ANALÍSTA";
 type EstadoUsuario = "ACTIVO" | "INACTIVO" | "LICENCIA";
