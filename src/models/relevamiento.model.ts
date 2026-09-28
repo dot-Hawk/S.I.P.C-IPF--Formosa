@@ -4,9 +4,9 @@ import {type IRelevamiento } from "./interfaces/IRelevamiento.interface.js";
 const relevamientoSchema = new Schema<IRelevamiento>(
   {
     periodo: { type: String, required: true },
-    fechhaInicio: { type: Date, required: true },
+    fechaInicio: { type: Date, required: true },
     fechaLimite: { type: Date, required: true },
-    estado: { type: String, required: true },
+    estado: { type: String, enum: ["ABIERTO", "CERRADO"], required: true },
   },
   {
     timestamps: true,
