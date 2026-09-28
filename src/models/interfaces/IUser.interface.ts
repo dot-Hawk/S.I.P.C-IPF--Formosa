@@ -1,10 +1,9 @@
 import {type Document } from "mongoose";
 
-type Role = "ENCUESTADOR" | "SUPERVISOR" | "ANALÍSTA";
+type Role = "ENCUESTADOR" | "SUPERVISOR" | "ANALISTA";
 type EstadoUsuario = "ACTIVO" | "INACTIVO" | "LICENCIA";
 
 export interface IUser extends Document {
-  name: string;
   nombre: string;
   apellido: string;
   dni: string;

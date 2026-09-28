@@ -3,17 +3,14 @@ import {type IUser } from "./interfaces/IUser.interface.js";
 
 export const UserModel = new Schema<IUser>(
   {
-    name: { type: String, required: true },
     nombre: { type: String, required: true },
     apellido: { type: String, required: true },
     dni: { type: String, required: true },
     legajo: { type: String, required: true },
     email: { type: String, required: true },
     passwordHash: { type: String, required: true },
-    role: { type: String, required: true },
-    estado: { type: String, required: true },
-    createdAt: { type: Date, required: true },
-    updatedAt: { type: Date, required: true },
+    role: { type: String, enum: ["ENCUESTADOR", "SUPERVISOR", "ANALISTA"], required: true },
+    estado: { type: String, enum: ["ACTIVO", "INACTIVO", "LICENCIA"], required: true },
     ultimoAcceso: { type: Date, required: false },
   },
   { timestamps: true },
