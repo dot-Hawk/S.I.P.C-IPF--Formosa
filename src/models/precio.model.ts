@@ -8,6 +8,7 @@ const precioSchema = new Schema<IPrecio>(
     comercio: { type: Schema.Types.ObjectId, ref: "Comercio", required: true },
     encuestador: { type: Schema.Types.ObjectId, ref: "User", required: true },
     valor: { type: Number, required: true, min: 0 },
+    oferta: { type: Boolean, required: true, default: false },
     fechaRelevamiento: { type: Date, required: true },
     observacion: { type: String, required: false },
   },

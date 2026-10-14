@@ -82,3 +82,23 @@ describe("validatePrecioFilters", () => {
     assert.deepEqual(fields(result), ["comercio", "limit", "page"]);
   });
 });
+
+describe("oferta", () => {
+  const VALID = { relevamiento: ID, comercio: ID, producto: ID, valor: 100 };
+
+  it("accepts a boolean oferta on create and rejects anything else", () => {
+    assert.equal(validatePrecioCreate({ ...VALID, oferta: true }).valid, true);
+    assert.equal(validatePrecioCreate({ ...VALID, oferta: "si" }).valid, false);
+  });
+
+  it("accepts an update that only changes oferta", () => {
+    assert.equal(validatePrecioUpdate({ oferta: false }).valid, true);
+    assert.equal(validatePrecioUpdate({ oferta: 1 }).valid, false);
+  });
+
+  it("accepts the oferta filter only as true or false", () => {
+    assert.equal(validatePrecioFilters({ oferta: "true" }).valid, true);
+    assert.equal(validatePrecioFilters({ oferta: "false" }).valid, true);
+    assert.equal(validatePrecioFilters({ oferta: "yes" }).valid, false);
+  });
+});

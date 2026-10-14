@@ -420,6 +420,40 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
       409,
     );
 
+    // Once completed, only a supervisor can correct, and every change leaves an audit entry.
+    const supervisorUser = {
+      nombre: "Super",
+      apellido: "Integration",
+      dni: "20000009",
+      legajo: "L-Super",
+      email: "super@integration.test",
+      password: PASSWORD,
+      role: "SUPERVISOR",
+    };
+    assert.equal((await api("POST", "/api/users", { token: coord.token, body: supervisorUser })).status, 201);
+    const sup = await login(supervisorUser.email, PASSWORD);
+
+    const corrected = await api("PATCH", `/api/precios/${state.precioId}`, {
+      token: sup.token,
+      body: { valor: 1250, oferta: true },
+    });
+    assert.equal(corrected.status, 200);
+    assert.equal(corrected.body.oferta, true);
+
+    const history = await api("GET", `/api/auditoria/precios?precio=${state.precioId}`, { token: sup.token });
+    assert.deepEqual(
+      history.body.map((entry: { accion: string }) => entry.accion),
+      ["MODIFICACION", "MODIFICACION", "CREACION"],
+    );
+    assert.equal(history.body[0].rol, "SUPERVISOR");
+    assert.equal(history.body[0].anterior.valor, 1300);
+    assert.equal(history.body[0].posterior.valor, 1250);
+    assert.equal(history.body[2].anterior, null);
+    assert.equal((await api("GET", "/api/auditoria/precios", { token: a.token })).status, 403);
+
+    assert.equal((await api("GET", "/api/precios?oferta=true", { token: sup.token })).body.length, 1);
+    assert.equal((await api("GET", "/api/precios?oferta=false", { token: sup.token })).body.length, 1);
+
     const closeUrl = `/api/relevamientos/${state.relevamientoId}/cerrar`;
     assert.equal((await api("PATCH", closeUrl, { token: a.token })).status, 403);
     assert.equal((await api("PATCH", closeUrl, { token: coord.token })).body.estado, "CERRADO");
