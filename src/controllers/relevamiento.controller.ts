@@ -1,21 +1,7 @@
 import { type Request, type Response } from "express";
 import { isValidObjectId, type Model } from "mongoose";
 import { type IRelevamiento } from "../models/interfaces/IRelevamiento.interface.js";
-
-const DUPLICATE_KEY_ERROR_CODE = 11000;
-
-function isDuplicateKeyError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === DUPLICATE_KEY_ERROR_CODE
-  );
-}
-
-function isMongooseValidationError(error: unknown): error is Error {
-  return error instanceof Error && error.name === "ValidationError";
-}
+import { isDuplicateKeyError, isMongooseValidationError } from "../utils/mongo-errors.js";
 
 export function createRelevamientoController(model: Model<IRelevamiento>) {
   return {
