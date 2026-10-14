@@ -166,4 +166,71 @@ describe("relevamiento controller", () => {
       assert.deepEqual(res.body, found);
     });
   });
+
+  describe("close", () => {
+    it("answers 400 on an invalid id", async () => {
+      const res = fakeResponse();
+
+      await createRelevamientoController(asModel({})).close(
+        asRequest({ params: { id: "not-an-id" } }),
+        asResponse(res),
+      );
+
+      assert.equal(res.statusCode, 400);
+    });
+
+    it("atomically transitions only ABIERTO relevamientos to CERRADO", async () => {
+      let filter: unknown;
+      let update: unknown;
+      const closed = { periodo: "2026-10", estado: "CERRADO" };
+      const model = asModel({
+        findOneAndUpdate: async (f: unknown, u: unknown) => {
+          filter = f;
+          update = u;
+          return closed;
+        },
+      });
+      const res = fakeResponse();
+
+      await createRelevamientoController(model).close(
+        asRequest({ params: { id: VALID_ID } }),
+        asResponse(res),
+      );
+
+      assert.deepEqual(filter, { _id: VALID_ID, estado: "ABIERTO" });
+      assert.deepEqual(update, { estado: "CERRADO" });
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.body, closed);
+    });
+
+    it("answers 409 when it is already closed", async () => {
+      const model = asModel({
+        findOneAndUpdate: async () => null,
+        exists: async () => ({ _id: VALID_ID }),
+      });
+      const res = fakeResponse();
+
+      await createRelevamientoController(model).close(
+        asRequest({ params: { id: VALID_ID } }),
+        asResponse(res),
+      );
+
+      assert.equal(res.statusCode, 409);
+    });
+
+    it("answers 404 when it does not exist", async () => {
+      const model = asModel({
+        findOneAndUpdate: async () => null,
+        exists: async () => null,
+      });
+      const res = fakeResponse();
+
+      await createRelevamientoController(model).close(
+        asRequest({ params: { id: VALID_ID } }),
+        asResponse(res),
+      );
+
+      assert.equal(res.statusCode, 404);
+    });
+  });
 });

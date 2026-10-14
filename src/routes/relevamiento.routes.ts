@@ -16,5 +16,6 @@ relevamientoRouter.use(authenticate);
 relevamientoRouter.post("/", authorize("COORDINADOR"), validateRelevamiento, controller.create);
 relevamientoRouter.get("/", controller.list);
 relevamientoRouter.get("/:id", controller.getById);
+relevamientoRouter.patch("/:id/cerrar", authorize("COORDINADOR"), controller.close);
 
 export default relevamientoRouter;

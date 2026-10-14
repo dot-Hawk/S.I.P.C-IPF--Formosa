@@ -51,5 +51,33 @@ export function createRelevamientoController(model: Model<IRelevamiento>) {
 
       res.json(relevamiento);
     },
+
+    async close(req: Request, res: Response): Promise<void> {
+      const id = req.params["id"];
+
+      if (!id || !isValidObjectId(id)) {
+        res.status(400).json({ message: "Invalid relevamiento id" });
+        return;
+      }
+
+      // Single atomic update: only an ABIERTO relevamiento can transition, even under concurrent requests.
+      const closed = await model.findOneAndUpdate(
+        { _id: id, estado: "ABIERTO" },
+        { estado: "CERRADO" },
+        { new: true },
+      );
+
+      if (closed) {
+        res.json(closed);
+        return;
+      }
+
+      if (await model.exists({ _id: id })) {
+        res.status(409).json({ message: "Relevamiento is already closed" });
+        return;
+      }
+
+      res.status(404).json({ message: "Relevamiento not found" });
+    },
   };
 }
