@@ -1,6 +1,7 @@
 import {type Document } from "mongoose";
 
-type Role = "ENCUESTADOR" | "SUPERVISOR" | "ANALISTA" | "COORDINADOR" | "DIRECCION";
+export const ROLES = ["ENCUESTADOR", "SUPERVISOR", "ANALISTA", "COORDINADOR", "DIRECCION"] as const;
+export type Role = (typeof ROLES)[number];
 type EstadoUsuario = "ACTIVO" | "INACTIVO" | "LICENCIA";
 
 export interface IUser extends Document {
