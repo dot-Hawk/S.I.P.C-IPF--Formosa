@@ -11,5 +11,12 @@ services:
     volumes:
       - sipc-pgdata:/var/lib/postgresql/data
 
+  engine:
+    build: ./engine
+    environment:
+      ENGINE_API_KEY: ${ENGINE_API_KEY:?set ENGINE_API_KEY}
+    ports:
+      - "8000:8000"
+
 volumes:
   sipc-pgdata:

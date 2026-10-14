@@ -38,6 +38,8 @@ export const ESTADOS_CANASTA = ["ACTIVO", "INACTIVO"] as const;
 
 export const ACCIONES_AUDITORIA = ["CREACION", "MODIFICACION", "ELIMINACION"] as const;
 
+export const ESTADOS_CALCULO = ["COMPLETADO", "FALLIDO"] as const;
+
 export type Role = (typeof ROLES)[number];
 export type EstadoUsuario = (typeof ESTADOS_USUARIO)[number];
 export type FrecuenciaRelevamiento = (typeof FRECUENCIAS_RELEVAMIENTO)[number];
@@ -50,3 +52,4 @@ export type EstadoAsignacion = (typeof ESTADOS_ASIGNACION)[number];
 export type CategoriaCanasta = (typeof CATEGORIAS_CANASTA)[number];
 export type EstadoCanasta = (typeof ESTADOS_CANASTA)[number];
 export type AccionAuditoria = (typeof ACCIONES_AUDITORIA)[number];
+export type EstadoCalculo = (typeof ESTADOS_CALCULO)[number];
