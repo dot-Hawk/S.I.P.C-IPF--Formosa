@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "seed:coordinador": "tsx src/scripts/seed-coordinador.ts"
+    "seed:coordinador": "tsx src/scripts/seed-coordinador.ts",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test:integration": "tsx --test test/integration/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
