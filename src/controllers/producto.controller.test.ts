@@ -93,6 +93,21 @@ describe("producto controller", () => {
       assert.equal(received !== undefined && "marca" in received, false);
     });
 
+    it("answers 409 when an equal producto already exists", async () => {
+      const model = {
+        create: async () => {
+          throw Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
+        },
+      };
+
+      const res = await call(controller(model).create, {
+        body: { nombre: "Leche", categoria: "Lacteos", unidad: "LT", cantidadReferencia: 1 },
+      });
+
+      assert.equal(res.statusCode, 409);
+      assert.deepEqual(res.body, { message: "A producto with the same nombre, marca, unidad and cantidadReferencia already exists" });
+    });
+
     it("answers 400 on a mongoose validation error", async () => {
       const model = {
         create: async () => {
@@ -175,6 +190,18 @@ describe("producto controller", () => {
       const res = await call(controller(model).update, { params: { id: VALID_ID }, body: { nombre: "x" } });
 
       assert.equal(res.statusCode, 404);
+    });
+
+    it("answers 409 when the change collides with another producto", async () => {
+      const model = {
+        findByIdAndUpdate: async () => {
+          throw Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
+        },
+      };
+
+      const res = await call(controller(model).update, { params: { id: VALID_ID }, body: { nombre: "x" } });
+
+      assert.equal(res.statusCode, 409);
     });
 
     it("answers 400 on an invalid id", async () => {

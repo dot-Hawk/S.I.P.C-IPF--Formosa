@@ -207,6 +207,17 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
     state.productoId = producto.body._id;
     state.producto2Id = producto2.body._id;
 
+    const sameButCase = await api("POST", "/api/productos", {
+      token: coord.token,
+      body: { nombre: "arroz", categoria: "Otra", unidad: "KG", cantidadReferencia: 1, marca: "GALLO" },
+    });
+    const sameWithoutMarca = await api("POST", "/api/productos", {
+      token: coord.token,
+      body: { nombre: "Fideos", categoria: "Almacen", unidad: "G", cantidadReferencia: 500 },
+    });
+    assert.equal(sameButCase.status, 409);
+    assert.equal(sameWithoutMarca.status, 409);
+
     const denied = await api("POST", "/api/comercios", {
       token: analista.token,
       body: { nombre: "x", direccion: "y", zona: "z", tipo: "OTRO" },

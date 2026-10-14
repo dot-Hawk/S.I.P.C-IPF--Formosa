@@ -15,4 +15,11 @@ const productoSchema = new Schema<IProducto>(
   }
 );
 
+// A producto is identified by nombre + marca + unidad + cantidadReferencia. Case-insensitive
+// (collation strength 2) so "Leche" and "leche" collide. A missing marca counts as one value.
+productoSchema.index(
+  { nombre: 1, marca: 1, unidad: 1, cantidadReferencia: 1 },
+  { unique: true, collation: { locale: "es", strength: 2 } },
+);
+
 export const Producto = model<IProducto>("Producto", productoSchema);

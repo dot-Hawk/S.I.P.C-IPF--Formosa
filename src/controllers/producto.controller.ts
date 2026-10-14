@@ -1,7 +1,7 @@
 import { type Request, type Response } from "express";
 import { isValidObjectId, type Model } from "mongoose";
 import { type IProducto } from "../models/interfaces/IProducto.interface.js";
-import { isMongooseValidationError } from "../utils/mongo-errors.js";
+import { isDuplicateKeyError, isMongooseValidationError } from "../utils/mongo-errors.js";
 import { validateProductoFilters } from "../validators/producto.validator.js";
 
 const UPDATABLE_FIELDS = ["nombre", "categoria", "unidad", "cantidadReferencia", "marca"] as const;
@@ -11,6 +11,9 @@ const FILTER_FIELDS = ["categoria", "unidad", "estado"] as const;
 function trimIfText(field: string, value: unknown): unknown {
   return TEXT_FIELDS.has(field) && typeof value === "string" ? value.trim() : value;
 }
+
+const DUPLICATE_MESSAGE =
+  "A producto with the same nombre, marca, unidad and cantidadReferencia already exists";
 
 function pickUpdates(body: Record<string, unknown>): Record<string, unknown> {
   const updates: Record<string, unknown> = {};
@@ -50,6 +53,10 @@ export function createProductoController(model: Model<IProducto>) {
 
       res.json(producto);
     } catch (error) {
+      if (isDuplicateKeyError(error)) {
+        res.status(409).json({ message: DUPLICATE_MESSAGE });
+        return;
+      }
       if (isMongooseValidationError(error)) {
         res.status(400).json({ message: error.message });
         return;
@@ -69,6 +76,10 @@ export function createProductoController(model: Model<IProducto>) {
         const producto = await model.create(data);
         res.status(201).json(producto);
       } catch (error) {
+        if (isDuplicateKeyError(error)) {
+          res.status(409).json({ message: DUPLICATE_MESSAGE });
+          return;
+        }
         if (isMongooseValidationError(error)) {
           res.status(400).json({ message: error.message });
           return;
