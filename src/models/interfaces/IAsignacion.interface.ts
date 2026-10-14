@@ -1,6 +1,8 @@
 import { type Document, type Types } from "mongoose";
 
-type EstadoAsignacion = "PENDIENTE" | "EN_CURSO" | "COMPLETADA";
+export const ESTADOS_ASIGNACION = ["PENDIENTE", "EN_CURSO", "COMPLETADA"] as const;
+
+export type EstadoAsignacion = (typeof ESTADOS_ASIGNACION)[number];
 
 export interface IAsignacion extends Document {
   relevamiento: Types.ObjectId;

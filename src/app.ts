@@ -1,4 +1,5 @@
 import express, {type Application} from "express";
+import asignacionRouter from "./routes/asignacion.routes.js";
 import authRouter from "./routes/auth.routes.js";
 import comercioRouter from "./routes/comercio.routes.js";
 import productoRouter from "./routes/producto.routes.js";
@@ -13,5 +14,6 @@ app.use("/api/users", userRouter)
 app.use("/api/relevamientos", relevamientoRouter)
 app.use("/api/comercios", comercioRouter)
 app.use("/api/productos", productoRouter)
+app.use("/api/asignaciones", asignacionRouter)
 
 export default app;
