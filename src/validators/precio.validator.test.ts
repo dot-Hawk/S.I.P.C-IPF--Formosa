@@ -102,3 +102,23 @@ describe("oferta", () => {
     assert.equal(validatePrecioFilters({ oferta: "yes" }).valid, false);
   });
 });
+
+describe("confirmarDesvio and conAlerta", () => {
+  const VALID = { relevamiento: ID, comercio: ID, producto: ID, valor: 100 };
+
+  it("accepts a boolean confirmarDesvio and rejects anything else", () => {
+    assert.equal(validatePrecioCreate({ ...VALID, confirmarDesvio: true }).valid, true);
+    assert.equal(validatePrecioCreate({ ...VALID, confirmarDesvio: "si" }).valid, false);
+    assert.equal(validatePrecioUpdate({ valor: 5, confirmarDesvio: false }).valid, true);
+    assert.equal(validatePrecioUpdate({ valor: 5, confirmarDesvio: 1 }).valid, false);
+  });
+
+  it("an update with only confirmarDesvio changes nothing, so it is rejected", () => {
+    assert.equal(validatePrecioUpdate({ confirmarDesvio: true }).valid, false);
+  });
+
+  it("accepts conAlerta only as true", () => {
+    assert.equal(validatePrecioFilters({ conAlerta: "true" }).valid, true);
+    assert.equal(validatePrecioFilters({ conAlerta: "false" }).valid, false);
+  });
+});

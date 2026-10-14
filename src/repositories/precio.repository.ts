@@ -1,12 +1,14 @@
-import { and, desc, eq, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNotNull, lt, type SQL } from "drizzle-orm";
 import { type Db } from "../db/client.js";
 import {
   precioAuditoria,
   precios,
+  relevamientos,
   type NewPrecio,
   type Precio,
   type PrecioSnapshot,
 } from "../db/schema.js";
+import { type Alerta } from "../domain/desvio.js";
 import { type AccionAuditoria, type Role } from "../domain/enums.js";
 
 export interface Actor {
@@ -20,6 +22,8 @@ export interface PrecioFilter {
   producto?: string;
   encuestador?: string;
   oferta?: boolean;
+  // Only the prices that were confirmed despite being far from their history.
+  conAlerta?: boolean;
 }
 
 export interface Page {
@@ -30,15 +34,20 @@ export interface Page {
 export type PrecioInput = Pick<
   NewPrecio,
   "relevamiento" | "producto" | "comercio" | "encuestador" | "valor" | "oferta" | "fechaRelevamiento" | "observacion"
->;
+> & { alerta?: Alerta | null };
 
-export type PrecioChanges = Partial<Pick<NewPrecio, "valor" | "observacion" | "oferta">>;
+export type PrecioChanges = Partial<Pick<NewPrecio, "valor" | "observacion" | "oferta">> & {
+  alerta?: Alerta | null;
+};
 
 // Every write also leaves its audit entry, in the same transaction: either both happen or neither.
 export interface PrecioRepository {
   create(data: PrecioInput, actor: Actor): Promise<Precio>;
   list(filter: PrecioFilter, page: Page): Promise<Precio[]>;
   findById(id: string): Promise<Precio | null>;
+  // Prices of the same producto in the same commerce in earlier relevamientos, newest first.
+  // Promotional prices are left out: they would distort what is normal.
+  historial(producto: string, comercio: string, antesDe: Date, limit?: number): Promise<number[]>;
   update(id: string, changes: PrecioChanges, actor: Actor): Promise<Precio | null>;
   remove(id: string, actor: Actor): Promise<Precio | null>;
 }
@@ -91,6 +100,7 @@ export function createPrecioRepository(db: Db): PrecioRepository {
         filter.producto !== undefined ? eq(precios.producto, filter.producto) : undefined,
         filter.encuestador !== undefined ? eq(precios.encuestador, filter.encuestador) : undefined,
         filter.oferta !== undefined ? eq(precios.oferta, filter.oferta) : undefined,
+        filter.conAlerta === true ? isNotNull(precios.alerta) : undefined,
       ];
 
       return db
@@ -105,6 +115,24 @@ export function createPrecioRepository(db: Db): PrecioRepository {
     async findById(id) {
       const [row] = await db.select().from(precios).where(eq(precios.id, id)).limit(1);
       return row ?? null;
+    },
+
+    async historial(producto, comercio, antesDe, limit = 12) {
+      const rows = await db
+        .select({ valor: precios.valor })
+        .from(precios)
+        .innerJoin(relevamientos, eq(precios.relevamiento, relevamientos.id))
+        .where(
+          and(
+            eq(precios.producto, producto),
+            eq(precios.comercio, comercio),
+            eq(precios.oferta, false),
+            lt(relevamientos.fechaInicio, antesDe),
+          ),
+        )
+        .orderBy(desc(relevamientos.fechaInicio))
+        .limit(limit);
+      return rows.map((r) => r.valor);
     },
 
     async update(id, changes, actor) {

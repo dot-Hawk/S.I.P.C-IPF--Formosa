@@ -41,6 +41,12 @@ function checkOferta(value: unknown, errors: ValidationError[]): void {
   }
 }
 
+function checkConfirmarDesvio(value: unknown, errors: ValidationError[]): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    errors.push({ field: "confirmarDesvio", message: "confirmarDesvio must be a boolean" });
+  }
+}
+
 function checkFecha(value: unknown, now: Date, errors: ValidationError[]): void {
   const parsed = typeof value === "string" && ISO_DATE_PREFIX.test(value) ? Date.parse(value) : NaN;
 
@@ -64,6 +70,7 @@ export function validatePrecioCreate(
   if (input["fechaRelevamiento"] !== undefined) checkFecha(input["fechaRelevamiento"], now, errors);
   if (input["observacion"] !== undefined) checkObservacion(input["observacion"], errors);
   if (input["oferta"] !== undefined) checkOferta(input["oferta"], errors);
+  checkConfirmarDesvio(input["confirmarDesvio"], errors);
 
   return result(errors);
 }
@@ -78,6 +85,7 @@ export function validatePrecioUpdate(input: Record<string, unknown>): Validation
   if (valor !== undefined) checkValor(valor, errors);
   if (observacion !== undefined) checkObservacion(observacion, errors);
   if (oferta !== undefined) checkOferta(oferta, errors);
+  checkConfirmarDesvio(input["confirmarDesvio"], errors);
 
   return result(errors);
 }
@@ -89,9 +97,12 @@ export function validatePrecioFilters(query: Record<string, unknown>): Validatio
     if (query[field] !== undefined) checkId(field, query[field], errors);
   }
 
-  const { page, limit, oferta } = query;
+  const { page, limit, oferta, conAlerta } = query;
   if (oferta !== undefined && oferta !== "true" && oferta !== "false") {
     errors.push({ field: "oferta", message: "oferta must be true or false" });
+  }
+  if (conAlerta !== undefined && conAlerta !== "true") {
+    errors.push({ field: "conAlerta", message: "conAlerta must be true" });
   }
   if (page !== undefined && !(typeof page === "string" && POSITIVE_INTEGER.test(page))) {
     errors.push({ field: "page", message: "page must be a positive integer" });

@@ -1,6 +1,7 @@
 import { type Request, type Response } from "express";
 import { type AuthPayload } from "../auth/token.service.js";
-import { type Precio } from "../db/schema.js";
+import { type Precio, type Relevamiento } from "../db/schema.js";
+import { evaluarDesvio, type Alerta } from "../domain/desvio.js";
 import { AUTH_LOCALS_KEY } from "../middlewares/authenticate.middleware.js";
 import { type AsignacionRepository } from "../repositories/asignacion.repository.js";
 import {
@@ -46,7 +47,7 @@ export function createPrecioController(repos: PrecioRepositories) {
     req: Request,
     res: Response,
     { allowSupervisor = false } = {},
-  ): Promise<{ precio: Precio; auth: AuthPayload } | null> {
+  ): Promise<{ precio: Precio; auth: AuthPayload; relevamiento: Relevamiento } | null> {
     const auth = getAuth(res);
     if (!auth) {
       res.status(401).json({ message: "Authentication required" });
@@ -73,14 +74,23 @@ export function createPrecioController(repos: PrecioRepositories) {
       return null;
     }
 
-    if (asSupervisor) return { precio, auth };
+    if (asSupervisor) return { precio, auth, relevamiento };
 
     if (!(await repos.asignaciones.hasEnCurso(precio.relevamiento, precio.comercio, auth.userId))) {
       res.status(409).json({ message: "The asignacion is no longer EN_CURSO" });
       return null;
     }
 
-    return { precio, auth };
+    return { precio, auth, relevamiento };
+  }
+
+  // The warning asks the surveyor to double-check; it never blocks a price that is confirmed.
+  function alertaRequerida(res: Response, alerta: Alerta): void {
+    res.status(409).json({
+      message: "El precio se aleja del historial de este producto en este comercio: verifíquelo y confírmelo",
+      requiereConfirmacion: true,
+      alerta,
+    });
   }
 
   return {
@@ -127,6 +137,17 @@ export function createPrecioController(repos: PrecioRepositories) {
         return;
       }
 
+      // Promotional prices are expected to be unusual, so they are not judged.
+      let alerta: Alerta | null = null;
+      if (oferta !== true) {
+        const historial = await repos.precios.historial(productoId, comercio, relevamiento.fechaInicio);
+        alerta = evaluarDesvio(historial, valor);
+        if (alerta && req.body.confirmarDesvio !== true) {
+          alertaRequerida(res, alerta);
+          return;
+        }
+      }
+
       const data: Record<string, unknown> = {
         relevamiento: relevamientoId,
         producto: productoId,
@@ -135,6 +156,7 @@ export function createPrecioController(repos: PrecioRepositories) {
         valor,
         oferta: oferta ?? false,
         fechaRelevamiento,
+        alerta,
       };
       if (observacion !== undefined) data["observacion"] = observacion.trim();
 
@@ -170,6 +192,7 @@ export function createPrecioController(repos: PrecioRepositories) {
       }
       if (auth.role === "ENCUESTADOR") filter["encuestador"] = auth.userId;
       if (req.query["oferta"] !== undefined) filter["oferta"] = req.query["oferta"] === "true";
+      if (req.query["conAlerta"] === "true") filter["conAlerta"] = true;
 
       const limit = typeof req.query["limit"] === "string" ? Number(req.query["limit"]) : DEFAULT_PAGE_SIZE;
       const page = typeof req.query["page"] === "string" ? Number(req.query["page"]) : 1;
@@ -207,6 +230,27 @@ export function createPrecioController(repos: PrecioRepositories) {
       if (req.body.valor !== undefined) changes.valor = req.body.valor;
       if (req.body.observacion !== undefined) changes.observacion = req.body.observacion.trim();
       if (req.body.oferta !== undefined) changes.oferta = req.body.oferta;
+
+      // A new value (or turning a promotion off) is judged again against the history.
+      if (changes.valor !== undefined || changes.oferta !== undefined) {
+        const valor = changes.valor ?? loaded.precio.valor;
+        const oferta = changes.oferta ?? loaded.precio.oferta;
+
+        let alerta: Alerta | null = null;
+        if (!oferta) {
+          const historial = await repos.precios.historial(
+            loaded.precio.producto,
+            loaded.precio.comercio,
+            loaded.relevamiento.fechaInicio,
+          );
+          alerta = evaluarDesvio(historial, valor);
+          if (alerta && req.body.confirmarDesvio !== true) {
+            alertaRequerida(res, alerta);
+            return;
+          }
+        }
+        changes.alerta = alerta;
+      }
 
       const updated = await repos.precios.update(loaded.precio.id, changes, toActor(loaded.auth));
       if (!updated) {

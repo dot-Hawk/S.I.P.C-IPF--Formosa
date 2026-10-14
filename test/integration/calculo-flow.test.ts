@@ -285,4 +285,57 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
     assert.equal(res.status, 409);
     assert.match(res.body.message, /2026-02/);
   });
+
+  it("warns when a new price is far from the history of the producto in that commerce", async () => {
+    const { pool } = (db as NonNullable<typeof db>).getDbHandle();
+    await pool.query("UPDATE relevamientos SET estado = 'CERRADO'");
+    // An earlier test marked a price as a promotion, and promotions are not part of the history.
+    await pool.query("UPDATE precios SET oferta = false");
+
+    const rel = await pool.query(
+      `INSERT INTO relevamientos (periodo, frecuencia, fecha_inicio, fecha_limite, estado)
+       VALUES ('2026-04', 'MENSUAL', '2026-04-01', '2026-04-28', 'ABIERTO') RETURNING id`,
+    );
+    const comercio = await pool.query("SELECT id FROM comercios WHERE nombre = 'Almacen 1'");
+    const encuestador = await pool.query("SELECT id FROM users WHERE role = 'ENCUESTADOR'");
+    const producto = await pool.query("SELECT id FROM productos LIMIT 1");
+    await pool.query(
+      `INSERT INTO asignaciones (relevamiento_id, encuestador_id, comercio_id, estado)
+       VALUES ($1, $2, $3, 'EN_CURSO')`,
+      [rel.rows[0].id, encuestador.rows[0].id, comercio.rows[0].id],
+    );
+
+    const body = {
+      relevamiento: rel.rows[0].id,
+      comercio: comercio.rows[0].id,
+      producto: producto.rows[0].id,
+      valor: 5000,
+    };
+
+    // History of this producto at Almacen 1: 100, 110, 132.
+    const warned = await api("POST", "/api/precios", { token: tokens.encuestador, body });
+    assert.equal(warned.status, 409);
+    assert.equal(warned.body.requiereConfirmacion, true);
+    assert.equal(warned.body.alerta.n, 3);
+    assert.ok(Math.abs(warned.body.alerta.media - 114) < 1e-9);
+
+    const confirmed = await api("POST", "/api/precios", {
+      token: tokens.encuestador,
+      body: { ...body, confirmarDesvio: true },
+    });
+    assert.equal(confirmed.status, 201);
+    assert.equal(confirmed.body.alerta.n, 3);
+
+    const flagged = await api("GET", "/api/precios?conAlerta=true", { token: tokens.analista });
+    assert.equal(flagged.body.length, 1);
+    assert.equal(flagged.body[0].id, confirmed.body.id);
+
+    // A usual value on a new price is saved without any alert.
+    const usual = await api("PATCH", `/api/precios/${confirmed.body.id}`, {
+      token: tokens.encuestador,
+      body: { valor: 120 },
+    });
+    assert.equal(usual.status, 200);
+    assert.equal(usual.body.alerta, null);
+  });
 });

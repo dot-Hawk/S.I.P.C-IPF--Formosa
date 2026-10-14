@@ -18,6 +18,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { type Alerta } from "../domain/desvio.js";
 import {
   ACCIONES_AUDITORIA,
   CATEGORIAS_CANASTA,
@@ -197,6 +198,8 @@ export const precios = pgTable(
     oferta: boolean("oferta").notNull().default(false),
     fechaRelevamiento: timestamp("fecha_relevamiento", { withTimezone: true, mode: "date" }).notNull(),
     observacion: text("observacion"),
+    // Set when the price was far from its history and the surveyor confirmed it anyway.
+    alerta: jsonb("alerta").$type<Alerta>(),
     ...timestamps,
   },
   (t) => [
