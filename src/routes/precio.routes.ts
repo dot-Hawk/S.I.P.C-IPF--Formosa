@@ -30,7 +30,7 @@ precioRouter.post(
 );
 precioRouter.get("/", controller.list);
 precioRouter.get("/:id", controller.getById);
-precioRouter.patch("/:id", authorize("ENCUESTADOR"), validateBody(validatePrecioUpdate), controller.update);
+precioRouter.patch("/:id", authorize("ENCUESTADOR", "SUPERVISOR"), validateBody(validatePrecioUpdate), controller.update);
 precioRouter.delete("/:id", authorize("ENCUESTADOR"), controller.remove);
 
 export default precioRouter;

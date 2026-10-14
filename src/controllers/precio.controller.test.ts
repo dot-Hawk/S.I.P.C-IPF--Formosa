@@ -250,6 +250,57 @@ describe("precio controller", () => {
       assert.equal((await call("remove", completed, { params: { id: ID } })).statusCode, 409);
     });
 
+    describe("supervisor correction", () => {
+      const SUPERVISOR: Auth = { userId: "sup-1", role: "SUPERVISOR" };
+      const other = { ...precio, encuestador: ID };
+
+      it("lets a supervisor correct another surveyor's precio even after the asignacion is COMPLETADA", async () => {
+        let update: unknown;
+        const m = models({
+          precio: {
+            findById: async () => other,
+            findOneAndUpdate: async (_f: unknown, u: unknown) => {
+              update = u;
+              return { valor: 50 };
+            },
+          },
+          asignacion: { exists: async () => null },
+        });
+
+        const res = await call("update", m, { params: { id: ID }, body: { valor: 50 } }, SUPERVISOR);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(update, { $set: { valor: 50 } });
+      });
+
+      it("still answers 409 once the relevamiento is CERRADO", async () => {
+        const m = models({
+          precio: { findById: async () => other },
+          relevamiento: { findById: async () => ({ estado: "CERRADO" }) },
+        });
+
+        const res = await call("update", m, { params: { id: ID }, body: { valor: 50 } }, SUPERVISOR);
+
+        assert.equal(res.statusCode, 409);
+      });
+
+      it("answers 404 for an unknown precio", async () => {
+        const m = models({ precio: { findById: async () => null } });
+
+        const res = await call("update", m, { params: { id: ID }, body: { valor: 50 } }, SUPERVISOR);
+
+        assert.equal(res.statusCode, 404);
+      });
+
+      it("cannot delete: removal stays with the owner", async () => {
+        const m = models({ precio: { findById: async () => other } });
+
+        const res = await call("remove", m, { params: { id: ID } }, SUPERVISOR);
+
+        assert.equal(res.statusCode, 404);
+      });
+    });
+
     it("deletes with 204 for the owner", async () => {
       let deleted: unknown;
       const m = models({

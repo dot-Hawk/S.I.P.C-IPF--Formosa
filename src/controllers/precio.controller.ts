@@ -45,9 +45,15 @@ export function createPrecioController(models: PrecioModels) {
     return found !== null;
   }
 
-  // Shared guard for editing or deleting: the owner, while the relevamiento is open
-  // and the asignacion is still EN_CURSO. Responds and returns null when not allowed.
-  async function loadEditable(req: Request, res: Response): Promise<IPrecio | null> {
+  // Shared guard for editing or deleting. The owner may act while the relevamiento is open
+  // and the asignacion is still EN_CURSO. With `allowSupervisor`, a SUPERVISOR may act on any
+  // precio (also after the asignacion is COMPLETADA) but still only while the relevamiento is
+  // open, since closing freezes the data. Responds and returns null when not allowed.
+  async function loadEditable(
+    req: Request,
+    res: Response,
+    { allowSupervisor = false } = {},
+  ): Promise<IPrecio | null> {
     const auth = getAuth(res);
     if (!auth) {
       res.status(401).json({ message: "Authentication required" });
@@ -60,8 +66,10 @@ export function createPrecioController(models: PrecioModels) {
       return null;
     }
 
+    const asSupervisor = allowSupervisor && auth.role === "SUPERVISOR";
+
     const precio = await models.precio.findById(id);
-    if (!precio || String(precio.encuestador) !== auth.userId) {
+    if (!precio || (!asSupervisor && String(precio.encuestador) !== auth.userId)) {
       res.status(404).json({ message: "Precio not found" });
       return null;
     }
@@ -71,6 +79,8 @@ export function createPrecioController(models: PrecioModels) {
       res.status(409).json({ message: "Relevamiento is not ABIERTO" });
       return null;
     }
+
+    if (asSupervisor) return precio;
 
     if (!(await hasEnCursoAsignacion(precio.relevamiento, precio.comercio, auth.userId))) {
       res.status(409).json({ message: "The asignacion is no longer EN_CURSO" });
@@ -205,7 +215,7 @@ export function createPrecioController(models: PrecioModels) {
     },
 
     async update(req: Request, res: Response): Promise<void> {
-      const precio = await loadEditable(req, res);
+      const precio = await loadEditable(req, res, { allowSupervisor: true });
       if (!precio) return;
 
       const updates: Record<string, unknown> = {};
