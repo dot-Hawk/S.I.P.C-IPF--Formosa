@@ -1,0 +1,15 @@
+# Local PostgreSQL for development. Tests use a separate throwaway database (see README).
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: sipc
+      POSTGRES_PASSWORD: sipc
+      POSTGRES_DB: sipc
+    ports:
+      - "5432:5432"
+    volumes:
+      - sipc-pgdata:/var/lib/postgresql/data
+
+volumes:
+  sipc-pgdata:

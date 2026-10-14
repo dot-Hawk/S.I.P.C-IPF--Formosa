@@ -1,0 +1,1128 @@
+{
+  "id": "ce213dc4-af44-454c-9a0f-8a01bbeaece8",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.asignaciones": {
+      "name": "asignaciones",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "relevamiento_id": {
+          "name": "relevamiento_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "encuestador_id": {
+          "name": "encuestador_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "comercio_id": {
+          "name": "comercio_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "estado": {
+          "name": "estado",
+          "type": "estado_asignacion",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "asignaciones_encuestador_idx": {
+          "name": "asignaciones_encuestador_idx",
+          "columns": [
+            {
+              "expression": "encuestador_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "asignaciones_relevamiento_id_relevamientos_id_fk": {
+          "name": "asignaciones_relevamiento_id_relevamientos_id_fk",
+          "tableFrom": "asignaciones",
+          "tableTo": "relevamientos",
+          "columnsFrom": [
+            "relevamiento_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "asignaciones_encuestador_id_users_id_fk": {
+          "name": "asignaciones_encuestador_id_users_id_fk",
+          "tableFrom": "asignaciones",
+          "tableTo": "users",
+          "columnsFrom": [
+            "encuestador_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "asignaciones_comercio_id_comercios_id_fk": {
+          "name": "asignaciones_comercio_id_comercios_id_fk",
+          "tableFrom": "asignaciones",
+          "tableTo": "comercios",
+          "columnsFrom": [
+            "comercio_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "asignaciones_relevamiento_comercio_uq": {
+          "name": "asignaciones_relevamiento_comercio_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "relevamiento_id",
+            "comercio_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.canasta_nodos": {
+      "name": "canasta_nodos",
+      "schema": "",
+      "columns": {
+        "codigo": {
+          "name": "codigo",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "nombre": {
+          "name": "nombre",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "nivel": {
+          "name": "nivel",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "padre": {
+          "name": "padre",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ponderador": {
+          "name": "ponderador",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "derivado": {
+          "name": "derivado",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "estado": {
+          "name": "estado",
+          "type": "estado_canasta",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "categoria": {
+          "name": "categoria",
+          "type": "categoria_canasta",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "codigo_variedad_12": {
+          "name": "codigo_variedad_12",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tratamiento_especial": {
+          "name": "tratamiento_especial",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "canasta_nodos_padre_idx": {
+          "name": "canasta_nodos_padre_idx",
+          "columns": [
+            {
+              "expression": "padre",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "canasta_nodos_nivel_estado_idx": {
+          "name": "canasta_nodos_nivel_estado_idx",
+          "columns": [
+            {
+              "expression": "nivel",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "estado",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "canasta_nodos_padre_fk": {
+          "name": "canasta_nodos_padre_fk",
+          "tableFrom": "canasta_nodos",
+          "tableTo": "canasta_nodos",
+          "columnsFrom": [
+            "padre"
+          ],
+          "columnsTo": [
+            "codigo"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "canasta_nodos_nivel_ck": {
+          "name": "canasta_nodos_nivel_ck",
+          "value": "\"canasta_nodos\".\"nivel\" between 0 and 6"
+        },
+        "canasta_nodos_ponderador_ck": {
+          "name": "canasta_nodos_ponderador_ck",
+          "value": "\"canasta_nodos\".\"ponderador\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.comercios": {
+      "name": "comercios",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "nombre": {
+          "name": "nombre",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "direccion": {
+          "name": "direccion",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "zona": {
+          "name": "zona",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tipo": {
+          "name": "tipo",
+          "type": "tipo_comercio",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "estado": {
+          "name": "estado",
+          "type": "estado_comercio",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.precio_auditoria": {
+      "name": "precio_auditoria",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "precio_id": {
+          "name": "precio_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "relevamiento_id": {
+          "name": "relevamiento_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "comercio_id": {
+          "name": "comercio_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "producto_id": {
+          "name": "producto_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "accion": {
+          "name": "accion",
+          "type": "accion_auditoria",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "usuario_id": {
+          "name": "usuario_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rol": {
+          "name": "rol",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "anterior": {
+          "name": "anterior",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "posterior": {
+          "name": "posterior",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "precio_auditoria_precio_idx": {
+          "name": "precio_auditoria_precio_idx",
+          "columns": [
+            {
+              "expression": "precio_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "precio_auditoria_usuario_idx": {
+          "name": "precio_auditoria_usuario_idx",
+          "columns": [
+            {
+              "expression": "usuario_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "precio_auditoria_created_idx": {
+          "name": "precio_auditoria_created_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "precio_auditoria_usuario_id_users_id_fk": {
+          "name": "precio_auditoria_usuario_id_users_id_fk",
+          "tableFrom": "precio_auditoria",
+          "tableTo": "users",
+          "columnsFrom": [
+            "usuario_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.precios": {
+      "name": "precios",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "relevamiento_id": {
+          "name": "relevamiento_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "producto_id": {
+          "name": "producto_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "comercio_id": {
+          "name": "comercio_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "encuestador_id": {
+          "name": "encuestador_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "valor": {
+          "name": "valor",
+          "type": "numeric(14, 4)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "oferta": {
+          "name": "oferta",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "fecha_relevamiento": {
+          "name": "fecha_relevamiento",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "observacion": {
+          "name": "observacion",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "precios_encuestador_idx": {
+          "name": "precios_encuestador_idx",
+          "columns": [
+            {
+              "expression": "encuestador_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "precios_fecha_idx": {
+          "name": "precios_fecha_idx",
+          "columns": [
+            {
+              "expression": "fecha_relevamiento",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "precios_relevamiento_id_relevamientos_id_fk": {
+          "name": "precios_relevamiento_id_relevamientos_id_fk",
+          "tableFrom": "precios",
+          "tableTo": "relevamientos",
+          "columnsFrom": [
+            "relevamiento_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "precios_producto_id_productos_id_fk": {
+          "name": "precios_producto_id_productos_id_fk",
+          "tableFrom": "precios",
+          "tableTo": "productos",
+          "columnsFrom": [
+            "producto_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "precios_comercio_id_comercios_id_fk": {
+          "name": "precios_comercio_id_comercios_id_fk",
+          "tableFrom": "precios",
+          "tableTo": "comercios",
+          "columnsFrom": [
+            "comercio_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "precios_encuestador_id_users_id_fk": {
+          "name": "precios_encuestador_id_users_id_fk",
+          "tableFrom": "precios",
+          "tableTo": "users",
+          "columnsFrom": [
+            "encuestador_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "precios_relevamiento_producto_comercio_uq": {
+          "name": "precios_relevamiento_producto_comercio_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "relevamiento_id",
+            "producto_id",
+            "comercio_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "precios_valor_ck": {
+          "name": "precios_valor_ck",
+          "value": "\"precios\".\"valor\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.productos": {
+      "name": "productos",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "nombre": {
+          "name": "nombre",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "categoria": {
+          "name": "categoria",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "unidad": {
+          "name": "unidad",
+          "type": "unidad_producto",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cantidad_referencia": {
+          "name": "cantidad_referencia",
+          "type": "numeric(14, 4)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "marca": {
+          "name": "marca",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "codigo_variedad": {
+          "name": "codigo_variedad",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "estado": {
+          "name": "estado",
+          "type": "estado_producto",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "productos_identidad_uq": {
+          "name": "productos_identidad_uq",
+          "columns": [
+            {
+              "expression": "lower(\"nombre\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "coalesce(lower(\"marca\"), '')",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "unidad",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "cantidad_referencia",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "productos_codigo_variedad_idx": {
+          "name": "productos_codigo_variedad_idx",
+          "columns": [
+            {
+              "expression": "codigo_variedad",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "productos_codigo_variedad_canasta_nodos_codigo_fk": {
+          "name": "productos_codigo_variedad_canasta_nodos_codigo_fk",
+          "tableFrom": "productos",
+          "tableTo": "canasta_nodos",
+          "columnsFrom": [
+            "codigo_variedad"
+          ],
+          "columnsTo": [
+            "codigo"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "productos_cantidad_ck": {
+          "name": "productos_cantidad_ck",
+          "value": "\"productos\".\"cantidad_referencia\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.relevamientos": {
+      "name": "relevamientos",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "periodo": {
+          "name": "periodo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "frecuencia": {
+          "name": "frecuencia",
+          "type": "frecuencia_relevamiento",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fecha_inicio": {
+          "name": "fecha_inicio",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fecha_limite": {
+          "name": "fecha_limite",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "estado": {
+          "name": "estado",
+          "type": "estado_relevamiento",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "relevamientos_periodo_frecuencia_uq": {
+          "name": "relevamientos_periodo_frecuencia_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "periodo",
+            "frecuencia"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "nombre": {
+          "name": "nombre",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "apellido": {
+          "name": "apellido",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dni": {
+          "name": "dni",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "legajo": {
+          "name": "legajo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "rol",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "estado": {
+          "name": "estado",
+          "type": "estado_usuario",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ultimo_acceso": {
+          "name": "ultimo_acceso",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "users_dni_unique": {
+          "name": "users_dni_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "dni"
+          ]
+        },
+        "users_legajo_unique": {
+          "name": "users_legajo_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "legajo"
+          ]
+        },
+        "users_email_unique": {
+          "name": "users_email_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.accion_auditoria": {
+      "name": "accion_auditoria",
+      "schema": "public",
+      "values": [
+        "CREACION",
+        "MODIFICACION",
+        "ELIMINACION"
+      ]
+    },
+    "public.categoria_canasta": {
+      "name": "categoria_canasta",
+      "schema": "public",
+      "values": [
+        "NUCLEO",
+        "ESTACIONAL",
+        "REGULADO"
+      ]
+    },
+    "public.estado_asignacion": {
+      "name": "estado_asignacion",
+      "schema": "public",
+      "values": [
+        "PENDIENTE",
+        "EN_CURSO",
+        "COMPLETADA"
+      ]
+    },
+    "public.estado_canasta": {
+      "name": "estado_canasta",
+      "schema": "public",
+      "values": [
+        "ACTIVO",
+        "INACTIVO"
+      ]
+    },
+    "public.estado_comercio": {
+      "name": "estado_comercio",
+      "schema": "public",
+      "values": [
+        "ACTIVO",
+        "INACTIVO"
+      ]
+    },
+    "public.estado_producto": {
+      "name": "estado_producto",
+      "schema": "public",
+      "values": [
+        "ACTIVO",
+        "INACTIVO"
+      ]
+    },
+    "public.estado_relevamiento": {
+      "name": "estado_relevamiento",
+      "schema": "public",
+      "values": [
+        "ABIERTO",
+        "CERRADO"
+      ]
+    },
+    "public.estado_usuario": {
+      "name": "estado_usuario",
+      "schema": "public",
+      "values": [
+        "ACTIVO",
+        "INACTIVO",
+        "LICENCIA"
+      ]
+    },
+    "public.frecuencia_relevamiento": {
+      "name": "frecuencia_relevamiento",
+      "schema": "public",
+      "values": [
+        "QUINCENAL",
+        "MENSUAL"
+      ]
+    },
+    "public.rol": {
+      "name": "rol",
+      "schema": "public",
+      "values": [
+        "ENCUESTADOR",
+        "SUPERVISOR",
+        "ANALISTA",
+        "COORDINADOR",
+        "DIRECCION"
+      ]
+    },
+    "public.tipo_comercio": {
+      "name": "tipo_comercio",
+      "schema": "public",
+      "values": [
+        "SUPERMERCADO",
+        "ALMACEN",
+        "VERDULERIA",
+        "CARNICERIA",
+        "FARMACIA",
+        "OTRO"
+      ]
+    },
+    "public.unidad_producto": {
+      "name": "unidad_producto",
+      "schema": "public",
+      "values": [
+        "KG",
+        "G",
+        "LT",
+        "ML",
+        "UNIDAD"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
