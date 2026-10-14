@@ -1,0 +1,69 @@
+import { type Request, type Response } from "express";
+import { isValidObjectId, type Model } from "mongoose";
+import { type IRelevamiento } from "../models/interfaces/IRelevamiento.interface.js";
+
+const DUPLICATE_KEY_ERROR_CODE = 11000;
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === DUPLICATE_KEY_ERROR_CODE
+  );
+}
+
+function isMongooseValidationError(error: unknown): error is Error {
+  return error instanceof Error && error.name === "ValidationError";
+}
+
+export function createRelevamientoController(model: Model<IRelevamiento>) {
+  return {
+    async create(req: Request, res: Response): Promise<void> {
+      const { periodo, frecuencia, fechaInicio, fechaLimite } = req.body;
+
+      try {
+        const relevamiento = await model.create({
+          periodo,
+          frecuencia,
+          fechaInicio,
+          fechaLimite,
+          estado: "ABIERTO",
+        });
+        res.status(201).json(relevamiento);
+      } catch (error) {
+        if (isDuplicateKeyError(error)) {
+          res.status(409).json({ message: "A relevamiento already exists for this periodo and frecuencia" });
+          return;
+        }
+        if (isMongooseValidationError(error)) {
+          res.status(400).json({ message: error.message });
+          return;
+        }
+        throw error;
+      }
+    },
+
+    async list(_req: Request, res: Response): Promise<void> {
+      const relevamientos = await model.find().sort({ fechaInicio: -1 });
+      res.json(relevamientos);
+    },
+
+    async getById(req: Request, res: Response): Promise<void> {
+      const id = req.params["id"];
+
+      if (!id || !isValidObjectId(id)) {
+        res.status(400).json({ message: "Invalid relevamiento id" });
+        return;
+      }
+
+      const relevamiento = await model.findById(id);
+      if (!relevamiento) {
+        res.status(404).json({ message: "Relevamiento not found" });
+        return;
+      }
+
+      res.json(relevamiento);
+    },
+  };
+}
