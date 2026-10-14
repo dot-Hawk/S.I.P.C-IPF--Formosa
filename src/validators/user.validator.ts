@@ -1,5 +1,5 @@
 import { ROLES } from "../models/interfaces/IUser.interface.js";
-import { type ValidationError, type ValidationResult } from "./relevamiento.validator.js";
+import { type ValidationError, type ValidationResult } from "./validation.js";
 
 const REQUIRED_TEXT_FIELDS = ["nombre", "apellido", "dni", "legajo"] as const;
 const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
