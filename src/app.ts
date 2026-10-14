@@ -1,4 +1,5 @@
 import express, {type Application} from "express";
+import { errorHandler, notFoundHandler } from "./middlewares/error-handler.middleware.js";
 import asignacionRouter from "./routes/asignacion.routes.js";
 import authRouter from "./routes/auth.routes.js";
 import comercioRouter from "./routes/comercio.routes.js";
@@ -17,5 +18,8 @@ app.use("/api/comercios", comercioRouter)
 app.use("/api/productos", productoRouter)
 app.use("/api/asignaciones", asignacionRouter)
 app.use("/api/precios", precioRouter)
+
+app.use(notFoundHandler)
+app.use(errorHandler)
 
 export default app;

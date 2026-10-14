@@ -11,4 +11,7 @@ async function server() {
   });
 }
 
-server();
+server().catch((error: unknown) => {
+  console.error("Failed to start the server:", error instanceof Error ? error.message : error);
+  process.exit(1);
+});
