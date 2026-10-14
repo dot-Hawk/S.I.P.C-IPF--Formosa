@@ -4,21 +4,23 @@ import { createAsignacionController } from "../controllers/asignacion.controller
 import { createAuthenticate } from "../middlewares/authenticate.middleware.js";
 import { authorize } from "../middlewares/authorize.middleware.js";
 import { validateBody } from "../middlewares/validate-body.middleware.js";
-import { Asignacion } from "../models/asignacion.model.js";
-import { Comercio } from "../models/comercio.model.js";
-import { Relevamiento } from "../models/relevamiento.model.js";
-import { User } from "../models/user.model.js";
+import { getDb } from "../db/index.js";
+import { createAsignacionRepository } from "../repositories/asignacion.repository.js";
+import { createComercioRepository } from "../repositories/comercio.repository.js";
+import { createRelevamientoRepository } from "../repositories/relevamiento.repository.js";
+import { createUserRepository } from "../repositories/user.repository.js";
 import {
   validateAsignacionCreate,
   validateAsignacionEstado,
   validateAsignacionReassign,
 } from "../validators/asignacion.validator.js";
 
+const db = getDb();
 const controller = createAsignacionController({
-  asignacion: Asignacion,
-  relevamiento: Relevamiento,
-  user: User,
-  comercio: Comercio,
+  asignaciones: createAsignacionRepository(db),
+  relevamientos: createRelevamientoRepository(db),
+  users: createUserRepository(db),
+  comercios: createComercioRepository(db),
 });
 const authenticate = createAuthenticate(getAuthConfig().secret);
 

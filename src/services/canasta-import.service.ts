@@ -1,6 +1,5 @@
-import { type Model } from "mongoose";
 import { type CanastaNodoData } from "../domain/canasta.js";
-import { type ICanastaNodo } from "../models/interfaces/ICanastaNodo.interface.js";
+import { type CanastaRepository } from "../repositories/canasta.repository.js";
 
 export interface ImportCanastaResult {
   created: number;
@@ -21,42 +20,26 @@ function sameValue(a: unknown, b: unknown): boolean {
   return (a ?? null) === (b ?? null);
 }
 
-function isUnchanged(existing: Record<string, unknown>, fields: Fields): boolean {
-  return Object.entries(fields).every(([key, value]) => sameValue(existing[key], value));
-}
-
-function toOp(nodo: CanastaNodoData) {
-  const defined = Object.fromEntries(
-    Object.entries(fieldsOf(nodo)).filter(([, value]) => value !== undefined),
-  );
-
-  return {
-    updateOne: {
-      filter: { codigo: nodo.codigo },
-      update: { $set: defined, $setOnInsert: { estado: nodo.estado } },
-      upsert: true,
-    },
-  };
+function isUnchanged(existing: object, fields: Fields): boolean {
+  const current = existing as Record<string, unknown>;
+  return Object.entries(fields).every(([key, value]) => sameValue(current[key], value));
 }
 
 // Writes only what is new or changed, so a repeated import is a real no-op (and does not
 // touch updatedAt) and its report says what actually moved.
 export async function importCanasta(
-  model: Model<ICanastaNodo>,
+  canasta: CanastaRepository,
   nodos: CanastaNodoData[],
 ): Promise<ImportCanastaResult> {
   if (nodos.length === 0) return { created: 0, updated: 0, unchanged: 0 };
 
-  const existing = await model.find({}).lean();
-  const byCodigo = new Map<string, Record<string, unknown>>(
-    existing.map((doc) => [doc.codigo, doc as unknown as Record<string, unknown>]),
-  );
+  const existing = new Map((await canasta.findAll()).map((node) => [node.codigo, node]));
 
   const result: ImportCanastaResult = { created: 0, updated: 0, unchanged: 0 };
-  const ops: ReturnType<typeof toOp>[] = [];
+  const toWrite: CanastaNodoData[] = [];
 
   for (const nodo of nodos) {
-    const current = byCodigo.get(nodo.codigo);
+    const current = existing.get(nodo.codigo);
 
     if (!current) {
       result.created++;
@@ -67,10 +50,10 @@ export async function importCanasta(
       result.updated++;
     }
 
-    ops.push(toOp(nodo));
+    toWrite.push(nodo);
   }
 
-  if (ops.length > 0) await model.bulkWrite(ops);
+  if (toWrite.length > 0) await canasta.upsertMany(toWrite);
 
   return result;
 }

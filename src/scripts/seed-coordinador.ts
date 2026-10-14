@@ -1,13 +1,12 @@
 import "dotenv/config";
-import mongoose from "mongoose";
 import { seedCoordinador } from "../auth/seed-coordinador.service.js";
-import { connectDB } from "../config/database.js";
-import { User } from "../models/user.model.js";
+import { closeDb, connectDb, getDb } from "../db/index.js";
+import { createUserRepository } from "../repositories/user.repository.js";
 
 async function main(): Promise<void> {
-  await connectDB();
+  await connectDb();
 
-  const result = await seedCoordinador(User, {
+  const result = await seedCoordinador(createUserRepository(getDb()), {
     nombre: process.env["SEED_NOMBRE"],
     apellido: process.env["SEED_APELLIDO"],
     dni: process.env["SEED_DNI"],
@@ -24,4 +23,4 @@ main()
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   })
-  .finally(() => mongoose.disconnect());
+  .finally(() => closeDb());

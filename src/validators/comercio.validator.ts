@@ -1,4 +1,4 @@
-import { ESTADOS_COMERCIO, TIPOS_COMERCIO } from "../models/interfaces/IComercio.interface.js";
+import { ESTADOS_COMERCIO, TIPOS_COMERCIO } from "../domain/enums.js";
 import { type ValidationError, type ValidationResult } from "./validation.js";
 
 const TEXT_FIELDS = ["nombre", "direccion", "zona"] as const;

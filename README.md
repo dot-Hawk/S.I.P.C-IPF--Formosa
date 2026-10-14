@@ -2,18 +2,20 @@
 
 REST API for SIPC-IPF (Formosa): price survey management (relevamientos, commerces, products, assignments, prices) with role-based access.
 
-Stack: Node.js, TypeScript, Express 5, Mongoose 9 (MongoDB), `tsx`, `node:test`.
+Stack: Node.js, TypeScript, Express 5, PostgreSQL with Drizzle ORM (versioned SQL migrations), `tsx`, `node:test`.
 
 ## Requirements
 
 - Node.js (a version that supports ESM and `node:test`)
-- A running MongoDB instance
+- PostgreSQL 14 or newer (`docker compose up -d db` starts one for development)
 
 ## Getting started
 
 ```bash
 npm install
-cp .env.example .env   # then fill in the values
+docker compose up -d db          # PostgreSQL on localhost:5432 (user, password and database: sipc)
+cp .env.example .env             # then fill in the values
+npm run db:migrate               # create the tables
 npm run dev
 ```
 
@@ -23,23 +25,25 @@ See `.env.example` for the full list.
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `MONGO_URI` | yes | MongoDB connection string. The server exits on startup if it cannot connect. |
+| `DATABASE_URL` | yes | PostgreSQL connection string, e.g. `postgres://sipc:sipc@localhost:5432/sipc`. The server exits on startup if it cannot connect. |
 | `PORT` | no | HTTP port. |
 | `JWT_SECRET` | yes | Secret used to sign tokens (HS256). |
 | `JWT_EXPIRES_IN` | no | Token lifetime. Defaults to `8h`. |
 | `TRUST_PROXY` | no | Number of proxy hops to trust. Set it when running behind a reverse proxy so rate limiting sees the real client IP. |
 | `SEED_NOMBRE`, `SEED_APELLIDO`, `SEED_DNI`, `SEED_LEGAJO`, `SEED_EMAIL`, `SEED_PASSWORD` | seed only | Data for the first coordinator user. |
-| `MONGO_TEST_URI` | integration tests only | Throwaway database for `test:integration`. |
+| `DATABASE_TEST_URL` | integration tests only | Throwaway database for `test:integration`. Its schema is dropped. |
 
 ## Scripts
 
 | Script | Description |
 | --- | --- |
 | `npm run dev` | Start the server in watch mode. |
+| `npm run db:migrate` | Apply the pending SQL migrations (`drizzle/`). |
+| `npm run db:generate` | Generate a new migration after editing `src/db/schema.ts`. |
 | `npm run seed:coordinador` | Create the first `COORDINADOR` user. |
 | `npm run import:canasta -- <dir>` | Import the basket from the official workbooks (see below). |
 | `npm test` | Unit tests. No database needed. |
-| `npm run test:integration` | Full API flow against a real MongoDB. |
+| `npm run test:integration` | Full API flow against a real PostgreSQL. |
 | `npm run typecheck` | Type-check without emitting. |
 
 ## First user (seed)
@@ -54,20 +58,22 @@ The script is idempotent: it does nothing if a `COORDINADOR` already exists.
 
 ## Tests
 
-Unit tests are colocated with the code (`src/**/*.test.ts`) and use fakes instead of a database:
+Unit tests are colocated with the code (`src/**/*.test.ts`) and use fake repositories instead of a database:
 
 ```bash
 npm test
 ```
 
-The integration test (`test/integration/api-flow.test.ts`) exercises the whole business flow against a real MongoDB:
+The integration test (`test/integration/api-flow.test.ts`) applies the migrations and exercises the whole business flow against a real PostgreSQL:
 
 ```bash
-MONGO_TEST_URI=mongodb://127.0.0.1:27017/sipc_integration_test npm run test:integration
+docker run -d --rm --name sipc-pg-test -p 5433:5432 -e POSTGRES_PASSWORD=test -e POSTGRES_DB=sipc_integration_test postgres:16
+DATABASE_TEST_URL=postgres://postgres:test@127.0.0.1:5433/sipc_integration_test npm run test:integration
+docker stop sipc-pg-test
 ```
 
-- It is skipped when `MONGO_TEST_URI` is unset.
-- The database is **dropped before and after** the run, so the test refuses to run unless the database name contains `test`.
+- It is skipped when `DATABASE_TEST_URL` is unset.
+- The schema is **dropped before and after** the run, so the test refuses to run unless the database name contains `test`.
 - Tests are sequential and share state on purpose: they model one business flow, so a failure early on cascades.
 
 ## Basket (canasta)
@@ -86,7 +92,7 @@ npm run import:canasta -- /path/to/Recursos   # or set CANASTA_RECURSOS_DIR
 
 ## API overview
 
-All routes are under `/api`. Errors are JSON and never include stack traces.
+All routes are under `/api`. Errors are JSON and never include stack traces. Resources are identified by UUIDs (field `id`); basket nodes by their `codigo`.
 
 | Prefix | Purpose |
 | --- | --- |
@@ -123,23 +129,24 @@ All routes are under `/api`. Errors are JSON and never include stack traces.
 src/
   app.ts            Express app (routes, error handlers)
   server.ts         Entry point (DB connection, listen)
-  config/           Database and auth configuration
+  config/           Auth configuration
+  db/               Drizzle schema, connection, migration runner
+  repositories/     Data access behind interfaces (the only code that talks SQL)
   auth/             Token service, seed logic
   services/         Import of the basket
-  controllers/      Factories that receive models (testable with fakes)
-  domain/           Pure business rules
+  controllers/      Factories that receive repositories (testable with fakes)
+  domain/           Pure business rules and the shared enums
   middlewares/      authenticate, authorize, validateBody, rate limit
-  models/           Mongoose models
   routes/           Routers
   validators/       Hand-written input validators
-  utils/            Mongo error mapping, ObjectId checks
-  scripts/          CLI scripts (seed)
-test/integration/   End-to-end flow against MongoDB
+  utils/            SQL error mapping, uuid checks
+  scripts/          CLI scripts (seed, basket import)
+drizzle/            Versioned SQL migrations
+test/integration/   End-to-end flow against PostgreSQL
 ```
 
 ## Known limitations
 
-- The price audit entry is written right after the change, without a transaction. If that write fails the change still succeeds and the entry is logged to stderr so it can be recovered.
 - Rate limiting is per process; use a shared store (e.g. Redis) before running multiple instances.
 - No `helmet` or CORS configuration yet (add when the frontend exists).
 - The price calculation engine (Python service) is not implemented yet.

@@ -1,11 +1,10 @@
 import "dotenv/config";
 import path from "node:path";
 import ExcelJS from "exceljs";
-import mongoose from "mongoose";
-import { connectDB } from "../config/database.js";
+import { closeDb, connectDb, getDb } from "../db/index.js";
 import { buildCanasta } from "../domain/canasta.js";
 import { parseRecursos, type Sheets } from "../domain/canasta-source.js";
-import { CanastaNodo } from "../models/canasta-nodo.model.js";
+import { createCanastaRepository } from "../repositories/canasta.repository.js";
 import { importCanasta } from "../services/canasta-import.service.js";
 
 const FILES = {
@@ -55,8 +54,8 @@ async function main(): Promise<void> {
 
   const build = buildCanasta(parseRecursos({ ponderadores, diccionario, tratamiento }));
 
-  await connectDB();
-  const result = await importCanasta(CanastaNodo, build.nodos);
+  await connectDb();
+  const result = await importCanasta(createCanastaRepository(getDb()), build.nodos);
 
   console.log(`Canasta imported: ${build.nodos.length} nodes`);
   console.log(`  created: ${result.created}, updated: ${result.updated}, unchanged: ${result.unchanged}`);
@@ -69,4 +68,4 @@ main()
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   })
-  .finally(() => mongoose.disconnect());
+  .finally(() => closeDb());

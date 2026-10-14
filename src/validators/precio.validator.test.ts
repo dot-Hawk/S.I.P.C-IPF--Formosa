@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { validatePrecioCreate, validatePrecioFilters, validatePrecioUpdate } from "./precio.validator.js";
 
-const ID = "507f1f77bcf86cd799439011";
+const ID = "00000000-0000-4000-8000-000000000011";
 const NOW = new Date("2026-10-14T12:00:00Z");
 const VALID = { relevamiento: ID, comercio: ID, producto: ID, valor: 1250.5 };
 

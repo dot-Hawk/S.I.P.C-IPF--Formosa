@@ -4,19 +4,19 @@ import { createPrecioController } from "../controllers/precio.controller.js";
 import { createAuthenticate } from "../middlewares/authenticate.middleware.js";
 import { authorize } from "../middlewares/authorize.middleware.js";
 import { validateBody } from "../middlewares/validate-body.middleware.js";
-import { Asignacion } from "../models/asignacion.model.js";
-import { PrecioAuditoria } from "../models/precio-auditoria.model.js";
-import { Precio } from "../models/precio.model.js";
-import { Producto } from "../models/producto.model.js";
-import { Relevamiento } from "../models/relevamiento.model.js";
+import { getDb } from "../db/index.js";
+import { createAsignacionRepository } from "../repositories/asignacion.repository.js";
+import { createPrecioRepository } from "../repositories/precio.repository.js";
+import { createProductoRepository } from "../repositories/producto.repository.js";
+import { createRelevamientoRepository } from "../repositories/relevamiento.repository.js";
 import { validatePrecioCreate, validatePrecioUpdate } from "../validators/precio.validator.js";
 
+const db = getDb();
 const controller = createPrecioController({
-  precio: Precio,
-  relevamiento: Relevamiento,
-  asignacion: Asignacion,
-  producto: Producto,
-  auditoria: PrecioAuditoria,
+  precios: createPrecioRepository(db),
+  relevamientos: createRelevamientoRepository(db),
+  asignaciones: createAsignacionRepository(db),
+  productos: createProductoRepository(db),
 });
 const authenticate = createAuthenticate(getAuthConfig().secret);
 

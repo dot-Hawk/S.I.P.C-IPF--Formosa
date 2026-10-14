@@ -1,29 +1,25 @@
 import { type Request, type Response } from "express";
-import { isValidObjectId, type Model } from "mongoose";
-import { type IRelevamiento } from "../models/interfaces/IRelevamiento.interface.js";
-import { isDuplicateKeyError, isMongooseValidationError } from "../utils/mongo-errors.js";
+import { type RelevamientoRepository } from "../repositories/relevamiento.repository.js";
+import { isUniqueViolation } from "../utils/db-errors.js";
+import { isUuid } from "../utils/uuid.js";
 
-export function createRelevamientoController(model: Model<IRelevamiento>) {
+export function createRelevamientoController(relevamientos: RelevamientoRepository) {
   return {
     async create(req: Request, res: Response): Promise<void> {
       const { periodo, frecuencia, fechaInicio, fechaLimite } = req.body;
 
       try {
-        const relevamiento = await model.create({
+        const relevamiento = await relevamientos.create({
           periodo,
           frecuencia,
-          fechaInicio,
-          fechaLimite,
+          fechaInicio: new Date(fechaInicio),
+          fechaLimite: new Date(fechaLimite),
           estado: "ABIERTO",
         });
         res.status(201).json(relevamiento);
       } catch (error) {
-        if (isDuplicateKeyError(error)) {
+        if (isUniqueViolation(error)) {
           res.status(409).json({ message: "A relevamiento already exists for this periodo and frecuencia" });
-          return;
-        }
-        if (isMongooseValidationError(error)) {
-          res.status(400).json({ message: error.message });
           return;
         }
         throw error;
@@ -31,19 +27,18 @@ export function createRelevamientoController(model: Model<IRelevamiento>) {
     },
 
     async list(_req: Request, res: Response): Promise<void> {
-      const relevamientos = await model.find().sort({ fechaInicio: -1 });
-      res.json(relevamientos);
+      res.json(await relevamientos.list());
     },
 
     async getById(req: Request, res: Response): Promise<void> {
       const id = req.params["id"];
 
-      if (!id || !isValidObjectId(id)) {
+      if (!isUuid(id)) {
         res.status(400).json({ message: "Invalid relevamiento id" });
         return;
       }
 
-      const relevamiento = await model.findById(id);
+      const relevamiento = await relevamientos.findById(id);
       if (!relevamiento) {
         res.status(404).json({ message: "Relevamiento not found" });
         return;
@@ -55,24 +50,18 @@ export function createRelevamientoController(model: Model<IRelevamiento>) {
     async close(req: Request, res: Response): Promise<void> {
       const id = req.params["id"];
 
-      if (!id || !isValidObjectId(id)) {
+      if (!isUuid(id)) {
         res.status(400).json({ message: "Invalid relevamiento id" });
         return;
       }
 
-      // Single atomic update: only an ABIERTO relevamiento can transition, even under concurrent requests.
-      const closed = await model.findOneAndUpdate(
-        { _id: id, estado: "ABIERTO" },
-        { estado: "CERRADO" },
-        { new: true },
-      );
-
+      const closed = await relevamientos.closeIfOpen(id);
       if (closed) {
         res.json(closed);
         return;
       }
 
-      if (await model.exists({ _id: id })) {
+      if (await relevamientos.findById(id)) {
         res.status(409).json({ message: "Relevamiento is already closed" });
         return;
       }

@@ -4,10 +4,11 @@ import { createCanastaController } from "../controllers/canasta.controller.js";
 import { createAuthenticate } from "../middlewares/authenticate.middleware.js";
 import { authorize } from "../middlewares/authorize.middleware.js";
 import { validateBody } from "../middlewares/validate-body.middleware.js";
-import { CanastaNodo } from "../models/canasta-nodo.model.js";
+import { getDb } from "../db/index.js";
+import { createCanastaRepository } from "../repositories/canasta.repository.js";
 import { validateCanastaEstado, validateVariedadCreate } from "../validators/canasta.validator.js";
 
-const controller = createCanastaController(CanastaNodo);
+const controller = createCanastaController(createCanastaRepository(getDb()));
 const authenticate = createAuthenticate(getAuthConfig().secret);
 
 const canastaRouter = Router();

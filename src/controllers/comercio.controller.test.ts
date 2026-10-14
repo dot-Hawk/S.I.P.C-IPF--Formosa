@@ -1,183 +1,128 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { type Request, type Response } from "express";
-import { type Model } from "mongoose";
-import { type IComercio } from "../models/interfaces/IComercio.interface.js";
+import { type ComercioRepository } from "../repositories/comercio.repository.js";
+import { invoke } from "../testing/http.js";
 import { createComercioController } from "./comercio.controller.js";
 
-interface FakeResponse {
-  statusCode: number;
-  body: unknown;
-  status(code: number): FakeResponse;
-  json(payload: unknown): FakeResponse;
-}
+const VALID_ID = "00000000-0000-4000-8000-000000000011";
 
-function fakeResponse(): FakeResponse {
-  const res: FakeResponse = {
-    statusCode: 200,
-    body: undefined,
-    status(code) {
-      res.statusCode = code;
-      return res;
-    },
-    json(payload) {
-      res.body = payload;
-      return res;
-    },
-  };
-  return res;
-}
-
-const VALID_ID = "507f1f77bcf86cd799439011";
-
-function controller(model: object) {
-  return createComercioController(model as unknown as Model<IComercio>);
-}
-
-async function call(
-  handler: (req: Request, res: Response) => Promise<void>,
-  req: object,
-): Promise<FakeResponse> {
-  const res = fakeResponse();
-  await handler(req as Request, res as unknown as Response);
-  return res;
+function controller(repo: object) {
+  return createComercioController(repo as ComercioRepository);
 }
 
 describe("comercio controller", () => {
   describe("create", () => {
-    it("trims text, forces ACTIVO and answers 201", async () => {
+    it("trims text, forces ACTIVO and drops unknown fields", async () => {
       let received: Record<string, unknown> | undefined;
-      const model = {
+      const repo = {
         create: async (data: Record<string, unknown>) => {
           received = data;
           return data;
         },
       };
 
-      const res = await call(controller(model).create, {
-        body: { nombre: "  Super X ", direccion: " Calle 1", zona: "Centro ", tipo: "SUPERMERCADO", estado: "INACTIVO" },
+      const res = await invoke(controller(repo).create, {
+        body: {
+          nombre: " Super ",
+          direccion: " Calle 1 ",
+          zona: " Centro ",
+          tipo: "SUPERMERCADO",
+          estado: "INACTIVO",
+          id: "hack",
+        },
       });
 
       assert.equal(res.statusCode, 201);
       assert.deepEqual(received, {
-        nombre: "Super X",
+        nombre: "Super",
         direccion: "Calle 1",
         zona: "Centro",
         tipo: "SUPERMERCADO",
         estado: "ACTIVO",
       });
     });
-
-    it("answers 400 on a mongoose validation error", async () => {
-      const model = {
-        create: async () => {
-          throw Object.assign(new Error("invalid"), { name: "ValidationError" });
-        },
-      };
-
-      const res = await call(controller(model).create, {
-        body: { nombre: "a", direccion: "b", zona: "c", tipo: "OTRO" },
-      });
-
-      assert.equal(res.statusCode, 400);
-    });
   });
 
   describe("list", () => {
     it("answers 400 on invalid filters", async () => {
-      const res = await call(controller({}).list, { query: { tipo: "BAR" } });
+      const res = await invoke(controller({}).list, { query: { tipo: "X" } });
 
       assert.equal(res.statusCode, 400);
     });
 
-    it("applies only the provided filters and sorts by nombre", async () => {
+    it("passes only the provided filters, trimmed", async () => {
       let filter: unknown;
-      let sort: unknown;
-      const model = {
-        find: (f: unknown) => {
+      const repo = {
+        list: async (f: unknown) => {
           filter = f;
-          return {
-            sort: async (s: unknown) => {
-              sort = s;
-              return [];
-            },
-          };
+          return [];
         },
       };
 
-      await call(controller(model).list, { query: { zona: "Centro", estado: "ACTIVO" } });
+      await invoke(controller(repo).list, { query: { zona: " Centro ", estado: "ACTIVO", junk: "x" } });
 
       assert.deepEqual(filter, { zona: "Centro", estado: "ACTIVO" });
-      assert.deepEqual(sort, { nombre: 1 });
     });
   });
 
   describe("getById", () => {
     it("answers 400, 404 and 200 appropriately", async () => {
-      assert.equal((await call(controller({}).getById, { params: { id: "x" } })).statusCode, 400);
+      const found = controller({ findById: async () => ({ nombre: "x" }) });
+      const missing = controller({ findById: async () => null });
 
-      const missing = { findById: async () => null };
-      assert.equal((await call(controller(missing).getById, { params: { id: VALID_ID } })).statusCode, 404);
-
-      const found = { findById: async () => ({ nombre: "Super X" }) };
-      assert.equal((await call(controller(found).getById, { params: { id: VALID_ID } })).statusCode, 200);
+      assert.equal((await invoke(found.getById, { params: { id: "x" } })).statusCode, 400);
+      assert.equal((await invoke(missing.getById, { params: { id: VALID_ID } })).statusCode, 404);
+      assert.equal((await invoke(found.getById, { params: { id: VALID_ID } })).statusCode, 200);
     });
   });
 
   describe("update", () => {
     it("only sets whitelisted fields, ignoring estado and unknown fields", async () => {
-      let update: unknown;
-      let options: unknown;
-      const model = {
-        findByIdAndUpdate: async (_id: unknown, u: unknown, o: unknown) => {
-          update = u;
-          options = o;
+      let changes: unknown;
+      const repo = {
+        update: async (_id: string, c: unknown) => {
+          changes = c;
           return { nombre: "Nuevo" };
         },
       };
 
-      const res = await call(controller(model).update, {
+      const res = await invoke(controller(repo).update, {
         params: { id: VALID_ID },
-        body: { nombre: " Nuevo ", estado: "INACTIVO", _id: "hack" },
+        body: { nombre: " Nuevo ", zona: "Norte", estado: "INACTIVO", id: "hack" },
       });
 
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(update, { $set: { nombre: "Nuevo" } });
-      assert.deepEqual(options, { new: true, runValidators: true });
+      assert.deepEqual(changes, { nombre: "Nuevo", zona: "Norte" });
     });
 
-    it("answers 404 when the comercio does not exist", async () => {
-      const model = { findByIdAndUpdate: async () => null };
+    it("answers 404 when the comercio does not exist and 400 on an invalid id", async () => {
+      const missing = controller({ update: async () => null });
 
-      const res = await call(controller(model).update, { params: { id: VALID_ID }, body: { zona: "Norte" } });
-
-      assert.equal(res.statusCode, 404);
-    });
-
-    it("answers 400 on an invalid id", async () => {
-      const res = await call(controller({}).update, { params: { id: "x" }, body: { zona: "Norte" } });
-
-      assert.equal(res.statusCode, 400);
+      assert.equal(
+        (await invoke(missing.update, { params: { id: VALID_ID }, body: { nombre: "x" } })).statusCode,
+        404,
+      );
+      assert.equal((await invoke(missing.update, { params: { id: "x" }, body: { nombre: "x" } })).statusCode, 400);
     });
   });
 
   describe("setEstado", () => {
     it("sets only the estado", async () => {
-      let update: unknown;
-      const model = {
-        findByIdAndUpdate: async (_id: unknown, u: unknown) => {
-          update = u;
+      let changes: unknown;
+      const repo = {
+        update: async (_id: string, c: unknown) => {
+          changes = c;
           return { estado: "INACTIVO" };
         },
       };
 
-      const res = await call(controller(model).setEstado, {
+      const res = await invoke(controller(repo).setEstado, {
         params: { id: VALID_ID },
-        body: { estado: "INACTIVO", nombre: "ignored" },
+        body: { estado: "INACTIVO", nombre: "hack" },
       });
 
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(update, { $set: { estado: "INACTIVO" } });
+      assert.deepEqual(changes, { estado: "INACTIVO" });
     });
   });
 });

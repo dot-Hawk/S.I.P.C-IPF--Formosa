@@ -1,12 +1,11 @@
 import { type Request, type Response } from "express";
-import { type Model } from "mongoose";
-import { type IPrecioAuditoria } from "../models/interfaces/IPrecioAuditoria.interface.js";
+import { type AuditoriaFilter, type AuditoriaRepository } from "../repositories/auditoria.repository.js";
 import { validateAuditoriaFilters } from "../validators/auditoria.validator.js";
 import { DEFAULT_PAGE_SIZE } from "../validators/precio.validator.js";
 
 const FILTER_FIELDS = ["precio", "usuario", "relevamiento", "accion"] as const;
 
-export function createAuditoriaController(model: Model<IPrecioAuditoria>) {
+export function createAuditoriaController(auditoria: AuditoriaRepository) {
   return {
     async listPrecios(req: Request, res: Response): Promise<void> {
       const validation = validateAuditoriaFilters(req.query);
@@ -24,13 +23,7 @@ export function createAuditoriaController(model: Model<IPrecioAuditoria>) {
       const limit = typeof req.query["limit"] === "string" ? Number(req.query["limit"]) : DEFAULT_PAGE_SIZE;
       const page = typeof req.query["page"] === "string" ? Number(req.query["page"]) : 1;
 
-      const entries = await model
-        .find(filter)
-        .sort({ createdAt: -1, _id: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit);
-
-      res.json(entries);
+      res.json(await auditoria.listPrecios(filter as AuditoriaFilter, { limit, offset: (page - 1) * limit }));
     },
   };
 }

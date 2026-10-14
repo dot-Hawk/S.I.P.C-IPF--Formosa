@@ -1,6 +1,6 @@
 import { type NextFunction, type Request, type Response } from "express";
 import { type AuthPayload } from "../auth/token.service.js";
-import { type Role } from "../models/interfaces/IUser.interface.js";
+import { type Role } from "../domain/enums.js";
 import { AUTH_LOCALS_KEY } from "./authenticate.middleware.js";
 
 export function authorize(...allowedRoles: Role[]) {
