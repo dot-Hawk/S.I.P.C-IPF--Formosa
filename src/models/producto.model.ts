@@ -8,6 +8,7 @@ const productoSchema = new Schema<IProducto>(
     unidad: { type: String, enum: ["KG", "G", "LT", "ML", "UNIDAD"], required: true },
     cantidadReferencia: { type: Number, required: true, min: 0 },
     marca: { type: String, required: false },
+    codigoVariedad: { type: String, required: true, index: true },
     estado: { type: String, enum: ["ACTIVO", "INACTIVO"], required: true },
   },
   {

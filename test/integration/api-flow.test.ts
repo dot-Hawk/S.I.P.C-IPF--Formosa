@@ -96,6 +96,30 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
     });
     assert.deepEqual(seeded, { created: true });
 
+    // A tiny basket (one subtree with two variedades) built with the real import code.
+    const [{ buildCanasta }, { importCanasta }, { CanastaNodo }] = await Promise.all([
+      import("../../src/domain/canasta.js"),
+      import("../../src/services/canasta-import.service.js"),
+      import("../../src/models/canasta-nodo.model.js"),
+    ]);
+    const chain = { producto: "11111", subclase: "1111", clase: "111", grupo: "11", division: "1" };
+    const basket = buildCanasta({
+      nodos: [
+        { codigo: "0", nombre: "NIVEL GENERAL", nivel: 0, ponderador: 1 },
+        { codigo: "1", nombre: "ALIMENTOS", nivel: 1, ponderador: 1 },
+        { codigo: "11", nombre: "EN EL HOGAR", nivel: 2, ponderador: 1 },
+        { codigo: "111", nombre: "PANIFICACION", nivel: 3, ponderador: 1 },
+        { codigo: "1111", nombre: "PANIFICACION", nivel: 4, ponderador: 1 },
+        { codigo: "11111", nombre: "Pan fresco", nivel: 5, ponderador: 1 },
+        { codigo: "1111101", nombre: "Arroz", nivel: 6, ponderador: 0.6, ...chain },
+        { codigo: "1111102", nombre: "Fideos", nivel: 6, ponderador: 0.4, ...chain },
+      ],
+      categorias: { NUCLEO: ["1111101", "1111102"], ESTACIONAL: [], REGULADO: [] },
+      codigos12: {},
+      tratamientoEspecial: [],
+    });
+    await importCanasta(CanastaNodo, basket.nodos);
+
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(0, "127.0.0.1", () => resolve(s));
     });
@@ -196,11 +220,18 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
 
     const producto = await api("POST", "/api/productos", {
       token: coord.token,
-      body: { nombre: "Arroz", categoria: "Almacen", unidad: "KG", cantidadReferencia: 1, marca: "Gallo" },
+      body: {
+        nombre: "Arroz",
+        categoria: "Almacen",
+        unidad: "KG",
+        cantidadReferencia: 1,
+        marca: "Gallo",
+        codigoVariedad: "1111101",
+      },
     });
     const producto2 = await api("POST", "/api/productos", {
       token: coord.token,
-      body: { nombre: "Fideos", categoria: "Almacen", unidad: "G", cantidadReferencia: 500 },
+      body: { nombre: "Fideos", categoria: "Almacen", unidad: "G", cantidadReferencia: 500, codigoVariedad: "1111102" },
     });
     assert.equal(producto.status, 201);
     assert.equal(producto2.status, 201);
@@ -209,14 +240,45 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
 
     const sameButCase = await api("POST", "/api/productos", {
       token: coord.token,
-      body: { nombre: "arroz", categoria: "Otra", unidad: "KG", cantidadReferencia: 1, marca: "GALLO" },
+      body: {
+        nombre: "arroz",
+        categoria: "Otra",
+        unidad: "KG",
+        cantidadReferencia: 1,
+        marca: "GALLO",
+        codigoVariedad: "1111101",
+      },
     });
     const sameWithoutMarca = await api("POST", "/api/productos", {
       token: coord.token,
-      body: { nombre: "Fideos", categoria: "Almacen", unidad: "G", cantidadReferencia: 500 },
+      body: { nombre: "Fideos", categoria: "Almacen", unidad: "G", cantidadReferencia: 500, codigoVariedad: "1111102" },
     });
     assert.equal(sameButCase.status, 409);
     assert.equal(sameWithoutMarca.status, 409);
+
+    const unknownVariedad = await api("POST", "/api/productos", {
+      token: coord.token,
+      body: { nombre: "Otro", categoria: "x", unidad: "KG", cantidadReferencia: 1, codigoVariedad: "9999999" },
+    });
+    assert.equal(unknownVariedad.status, 400);
+
+    // The basket: readable by any role, extended and deactivated only by the coordinator.
+    const variedades = await api("GET", "/api/canasta?nivel=6", { token: analista.token });
+    assert.equal(variedades.body.length, 2);
+    const newVariedad = { codigo: "1111103", nombre: "Pan integral", padre: "11111", categoria: "NUCLEO" };
+    assert.equal((await api("POST", "/api/canasta", { token: analista.token, body: newVariedad })).status, 403);
+    assert.equal((await api("POST", "/api/canasta", { token: coord.token, body: newVariedad })).status, 201);
+    assert.equal((await api("POST", "/api/canasta", { token: coord.token, body: newVariedad })).status, 409);
+    assert.equal(
+      (await api("PATCH", "/api/canasta/1111103/estado", { token: coord.token, body: { estado: "INACTIVO" } }))
+        .status,
+      200,
+    );
+    const inactiveVariedad = await api("POST", "/api/productos", {
+      token: coord.token,
+      body: { nombre: "Pan", categoria: "x", unidad: "KG", cantidadReferencia: 1, codigoVariedad: "1111103" },
+    });
+    assert.equal(inactiveVariedad.status, 400);
 
     const denied = await api("POST", "/api/comercios", {
       token: analista.token,

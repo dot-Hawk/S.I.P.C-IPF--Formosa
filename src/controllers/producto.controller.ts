@@ -1,12 +1,24 @@
 import { type Request, type Response } from "express";
 import { isValidObjectId, type Model } from "mongoose";
+import {
+  NIVEL_VARIEDAD,
+  type ICanastaNodo,
+} from "../models/interfaces/ICanastaNodo.interface.js";
 import { type IProducto } from "../models/interfaces/IProducto.interface.js";
 import { isDuplicateKeyError, isMongooseValidationError } from "../utils/mongo-errors.js";
 import { validateProductoFilters } from "../validators/producto.validator.js";
 
-const UPDATABLE_FIELDS = ["nombre", "categoria", "unidad", "cantidadReferencia", "marca"] as const;
-const TEXT_FIELDS = new Set(["nombre", "categoria", "marca"]);
-const FILTER_FIELDS = ["categoria", "unidad", "estado"] as const;
+const UPDATABLE_FIELDS = [
+  "nombre",
+  "categoria",
+  "unidad",
+  "cantidadReferencia",
+  "marca",
+  "codigoVariedad",
+] as const;
+const TEXT_FIELDS = new Set(["nombre", "categoria", "marca", "codigoVariedad"]);
+const FILTER_FIELDS = ["categoria", "unidad", "estado", "codigoVariedad"] as const;
+const INVALID_VARIEDAD_MESSAGE = "codigoVariedad must be an existing active variedad of the canasta";
 
 function trimIfText(field: string, value: unknown): unknown {
   return TEXT_FIELDS.has(field) && typeof value === "string" ? value.trim() : value;
@@ -26,7 +38,14 @@ function pickUpdates(body: Record<string, unknown>): Record<string, unknown> {
   return updates;
 }
 
-export function createProductoController(model: Model<IProducto>) {
+export function createProductoController(model: Model<IProducto>, canasta: Model<ICanastaNodo>) {
+  async function isActiveVariedad(codigo: unknown): Promise<boolean> {
+    if (typeof codigo !== "string") return false;
+
+    const found = await canasta.exists({ codigo, nivel: NIVEL_VARIEDAD, estado: "ACTIVO" });
+    return found !== null;
+  }
+
   async function applyUpdate(
     req: Request,
     res: Response,
@@ -36,6 +55,11 @@ export function createProductoController(model: Model<IProducto>) {
 
     if (!id || !isValidObjectId(id)) {
       res.status(400).json({ message: "Invalid producto id" });
+      return;
+    }
+
+    if (updates["codigoVariedad"] !== undefined && !(await isActiveVariedad(updates["codigoVariedad"]))) {
+      res.status(400).json({ message: INVALID_VARIEDAD_MESSAGE });
       return;
     }
 
@@ -71,6 +95,11 @@ export function createProductoController(model: Model<IProducto>) {
         ...pickUpdates(req.body),
         estado: "ACTIVO",
       };
+
+      if (!(await isActiveVariedad(data["codigoVariedad"]))) {
+        res.status(400).json({ message: INVALID_VARIEDAD_MESSAGE });
+        return;
+      }
 
       try {
         const producto = await model.create(data);

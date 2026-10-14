@@ -4,6 +4,7 @@ import { createProductoController } from "../controllers/producto.controller.js"
 import { createAuthenticate } from "../middlewares/authenticate.middleware.js";
 import { authorize } from "../middlewares/authorize.middleware.js";
 import { validateBody } from "../middlewares/validate-body.middleware.js";
+import { CanastaNodo } from "../models/canasta-nodo.model.js";
 import { Producto } from "../models/producto.model.js";
 import {
   validateProductoCreate,
@@ -11,7 +12,7 @@ import {
   validateProductoUpdate,
 } from "../validators/producto.validator.js";
 
-const controller = createProductoController(Producto);
+const controller = createProductoController(Producto, CanastaNodo);
 const authenticate = createAuthenticate(getAuthConfig().secret);
 
 const productoRouter = Router();
