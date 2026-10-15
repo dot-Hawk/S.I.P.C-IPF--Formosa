@@ -8,7 +8,8 @@
     "seed:coordinador": "tsx src/scripts/seed-coordinador.ts",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "test:integration": "tsx --test test/integration/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "import:canasta": "tsx src/scripts/import-canasta.ts"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +25,7 @@
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "dotenv": "^18.0.4",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.1",
     "jsonwebtoken": "^9.0.3",

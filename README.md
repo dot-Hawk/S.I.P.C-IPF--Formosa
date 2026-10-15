@@ -37,6 +37,7 @@ See `.env.example` for the full list.
 | --- | --- |
 | `npm run dev` | Start the server in watch mode. |
 | `npm run seed:coordinador` | Create the first `COORDINADOR` user. |
+| `npm run import:canasta -- <dir>` | Import the basket from the official workbooks (see below). |
 | `npm test` | Unit tests. No database needed. |
 | `npm run test:integration` | Full API flow against a real MongoDB. |
 | `npm run typecheck` | Type-check without emitting. |
@@ -69,6 +70,20 @@ MONGO_TEST_URI=mongodb://127.0.0.1:27017/sipc_integration_test npm run test:inte
 - The database is **dropped before and after** the run, so the test refuses to run unless the database name contains `test`.
 - Tests are sequential and share state on purpose: they model one business flow, so a failure early on cascades.
 
+## Basket (canasta)
+
+The basket is a fixed 7-level tree: `NIVEL_GENERAL` (0) → `DIVISION` → `GRUPO` → `CLASE` → `SUBCLASE` → `PRODUCTO` → `VARIEDAD` (6, the level that is priced). Every variedad also belongs to one non-hierarchical `categoria`: `NUCLEO`, `ESTACIONAL` or `REGULADO`.
+
+Import it once from the official workbooks (`PONDERADORES.xlsx`, `DICCIONARIO_VARIEDADES.xlsx`, `TRATAMIENTO_ESPECIAL.xlsx`):
+
+```bash
+npm run import:canasta -- /path/to/Recursos   # or set CANASTA_RECURSOS_DIR
+```
+
+- It is idempotent: it only writes what is new or changed, and never reactivates a deactivated variedad.
+- The spreadsheets have holes in the intermediate levels; those nodes are rebuilt from their variedades and flagged `derivado: true`.
+- Every `Producto` must point to an active variedad through `codigoVariedad` (7 digits).
+
 ## API overview
 
 All routes are under `/api`. Errors are JSON and never include stack traces.
@@ -79,9 +94,11 @@ All routes are under `/api`. Errors are JSON and never include stack traces.
 | `/api/users` | User creation. |
 | `/api/relevamientos` | Survey cycles, close with `PATCH /:id/cerrar`. |
 | `/api/comercios` | Commerce catalog. |
+| `/api/canasta` | Basket tree (7 levels): read, add a variedad, deactivate a variedad. |
 | `/api/productos` | Product catalog. |
 | `/api/asignaciones` | Surveyor assignments and state transitions. |
-| `/api/precios` | Price capture and queries. |
+| `/api/precios` | Price capture and queries (`oferta=true\|false` filter). |
+| `/api/auditoria/precios` | Audit trail of prices (not available to `ENCUESTADOR`). |
 
 ### Roles
 
@@ -89,15 +106,15 @@ All routes are under `/api`. Errors are JSON and never include stack traces.
 
 - Writes to users, relevamientos, catalogs and assignments: `COORDINADOR` only.
 - Reads: any authenticated role (`DIRECCION` is effectively read-only).
-- Prices are created by `ENCUESTADOR` only, for their own `EN_CURSO` assignments.
+- Prices are created by `ENCUESTADOR` only, for their own `EN_CURSO` assignments; `SUPERVISOR` corrects them.
 - An `ENCUESTADOR` only sees their own data; other people's resources respond `404`, not `403`.
 
 ### Business rules worth knowing
 
 - **Relevamiento:** always created `ABIERTO`; unique per period + frequency (`2026-10` monthly, `2026-10-Q1`/`Q2` biweekly); closing is atomic and returns `409` if already closed.
-- **Comercio / Producto:** no `DELETE`; deactivate through `PATCH /:id/estado`.
+- **Comercio / Producto:** no `DELETE`; deactivate through `PATCH /:id/estado`. A producto is unique by `nombre` + `marca` + `unidad` + `cantidadReferencia` (case-insensitive; a missing `marca` counts as one value), otherwise `409`.
 - **Asignación:** `PENDIENTE` → `EN_CURSO` → `COMPLETADA` only; reassignment only while `PENDIENTE`; requires an open relevamiento and an active commerce and surveyor.
-- **Precio:** `valor > 0`, date not in the future nor before the relevamiento start; edit/delete only by the owner while the relevamiento is open and the assignment is `EN_CURSO`.
+- **Precio:** `valor > 0`, date not in the future nor before the relevamiento start; edit/delete only by the owner while the relevamiento is open and the assignment is `EN_CURSO`. `oferta` marks a promotional price: it is stored as registered and only used to filter. A `SUPERVISOR` can correct (`PATCH`, not delete) any price, even after the assignment is `COMPLETADA`, but only while the relevamiento is open.
 - **Login rate limit:** only failed attempts count; 5 per IP+email and 30 per IP every 15 minutes, then `429` with `Retry-After`. Counters live in memory, so they reset on restart and are not shared between instances.
 
 ## Project layout
@@ -108,6 +125,7 @@ src/
   server.ts         Entry point (DB connection, listen)
   config/           Database and auth configuration
   auth/             Token service, seed logic
+  services/         Import of the basket
   controllers/      Factories that receive models (testable with fakes)
   domain/           Pure business rules
   middlewares/      authenticate, authorize, validateBody, rate limit
@@ -121,6 +139,7 @@ test/integration/   End-to-end flow against MongoDB
 
 ## Known limitations
 
+- The price audit entry is written right after the change, without a transaction. If that write fails the change still succeeds and the entry is logged to stderr so it can be recovered.
 - Rate limiting is per process; use a shared store (e.g. Redis) before running multiple instances.
 - No `helmet` or CORS configuration yet (add when the frontend exists).
 - The price calculation engine (Python service) is not implemented yet.

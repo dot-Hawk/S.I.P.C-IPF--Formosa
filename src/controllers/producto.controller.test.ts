@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { type Request, type Response } from "express";
 import { type Model } from "mongoose";
 import { type IProducto } from "../models/interfaces/IProducto.interface.js";
+import { type ICanastaNodo } from "../models/interfaces/ICanastaNodo.interface.js";
 import { createProductoController } from "./producto.controller.js";
 
 interface FakeResponse {
@@ -30,8 +31,14 @@ function fakeResponse(): FakeResponse {
 
 const VALID_ID = "507f1f77bcf86cd799439011";
 
-function controller(model: object) {
-  return createProductoController(model as unknown as Model<IProducto>);
+const EXISTING_VARIEDAD = { exists: async () => ({ _id: "v" }) };
+const MISSING_VARIEDAD = { exists: async () => null };
+
+function controller(model: object, canasta: object = EXISTING_VARIEDAD) {
+  return createProductoController(
+    model as unknown as Model<IProducto>,
+    canasta as unknown as Model<ICanastaNodo>,
+  );
 }
 
 async function call(
@@ -61,6 +68,7 @@ describe("producto controller", () => {
           unidad: "KG",
           cantidadReferencia: 1,
           marca: " Gallo",
+          codigoVariedad: " 1111101 ",
           estado: "INACTIVO",
           _id: "hack",
         },
@@ -73,8 +81,42 @@ describe("producto controller", () => {
         unidad: "KG",
         cantidadReferencia: 1,
         marca: "Gallo",
+        codigoVariedad: "1111101",
         estado: "ACTIVO",
       });
+    });
+
+    it("checks the variedad is an active nivel 6 node of the canasta", async () => {
+      let filter: unknown;
+      const canasta = {
+        exists: async (f: unknown) => {
+          filter = f;
+          return { _id: "v" };
+        },
+      };
+      const model = { create: async (data: object) => data };
+
+      await call(controller(model, canasta).create, {
+        body: { nombre: "a", categoria: "b", unidad: "KG", cantidadReferencia: 1, codigoVariedad: "1111101" },
+      });
+
+      assert.deepEqual(filter, { codigo: "1111101", nivel: 6, estado: "ACTIVO" });
+    });
+
+    it("answers 400 when the variedad does not exist or is inactive", async () => {
+      let created = false;
+      const model = {
+        create: async () => {
+          created = true;
+        },
+      };
+
+      const res = await call(controller(model, MISSING_VARIEDAD).create, {
+        body: { nombre: "a", categoria: "b", unidad: "KG", cantidadReferencia: 1, codigoVariedad: "9999999" },
+      });
+
+      assert.equal(res.statusCode, 400);
+      assert.equal(created, false);
     });
 
     it("omits marca when it is not provided", async () => {
@@ -91,6 +133,21 @@ describe("producto controller", () => {
       });
 
       assert.equal(received !== undefined && "marca" in received, false);
+    });
+
+    it("answers 409 when an equal producto already exists", async () => {
+      const model = {
+        create: async () => {
+          throw Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
+        },
+      };
+
+      const res = await call(controller(model).create, {
+        body: { nombre: "Leche", categoria: "Lacteos", unidad: "LT", cantidadReferencia: 1, codigoVariedad: "1111101" },
+      });
+
+      assert.equal(res.statusCode, 409);
+      assert.deepEqual(res.body, { message: "A producto with the same nombre, marca, unidad and cantidadReferencia already exists" });
     });
 
     it("answers 400 on a mongoose validation error", async () => {
@@ -175,6 +232,49 @@ describe("producto controller", () => {
       const res = await call(controller(model).update, { params: { id: VALID_ID }, body: { nombre: "x" } });
 
       assert.equal(res.statusCode, 404);
+    });
+
+    it("validates the variedad only when codigoVariedad is being changed", async () => {
+      let lookups = 0;
+      const canasta = {
+        exists: async () => {
+          lookups++;
+          return { _id: "v" };
+        },
+      };
+      const model = { findByIdAndUpdate: async () => ({}) };
+
+      await call(controller(model, canasta).update, { params: { id: VALID_ID }, body: { nombre: "x" } });
+      assert.equal(lookups, 0);
+
+      await call(controller(model, canasta).update, {
+        params: { id: VALID_ID },
+        body: { codigoVariedad: "1111102" },
+      });
+      assert.equal(lookups, 1);
+    });
+
+    it("answers 400 when the new variedad does not exist", async () => {
+      const model = { findByIdAndUpdate: async () => ({}) };
+
+      const res = await call(controller(model, MISSING_VARIEDAD).update, {
+        params: { id: VALID_ID },
+        body: { codigoVariedad: "9999999" },
+      });
+
+      assert.equal(res.statusCode, 400);
+    });
+
+    it("answers 409 when the change collides with another producto", async () => {
+      const model = {
+        findByIdAndUpdate: async () => {
+          throw Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
+        },
+      };
+
+      const res = await call(controller(model).update, { params: { id: VALID_ID }, body: { nombre: "x" } });
+
+      assert.equal(res.statusCode, 409);
     });
 
     it("answers 400 on an invalid id", async () => {

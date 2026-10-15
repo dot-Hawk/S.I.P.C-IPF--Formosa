@@ -1,4 +1,4 @@
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { type Request, type Response } from "express";
 import { createPrecioController, type PrecioModels } from "./precio.controller.js";
@@ -49,6 +49,7 @@ function models(overrides: Partial<Record<keyof PrecioModels, object>> = {}): Pr
     relevamiento: { findById: async () => ({ estado: "ABIERTO", fechaInicio: FECHA_INICIO }) },
     asignacion: { exists: async () => ({ _id: "a" }) },
     producto: { findById: async () => ({ estado: "ACTIVO" }) },
+    auditoria: { create: async () => ({}) },
     ...overrides,
   } as unknown as PrecioModels;
 }
@@ -85,6 +86,81 @@ describe("precio controller", () => {
       assert.equal(received?.["encuestador"], ME);
       assert.equal(received?.["observacion"], "oferta");
       assert.ok(received?.["fechaRelevamiento"] instanceof Date);
+    });
+
+    it("stores oferta, false by default", async () => {
+      const received: Record<string, unknown>[] = [];
+      const m = models({
+        precio: {
+          create: async (data: Record<string, unknown>) => {
+            received.push(data);
+            return data;
+          },
+        },
+      });
+
+      await call("create", m, { body });
+      await call("create", m, { body: { ...body, oferta: true } });
+
+      assert.equal(received[0]?.["oferta"], false);
+      assert.equal(received[1]?.["oferta"], true);
+    });
+
+    it("records a CREACION audit entry with the author and the stored values", async () => {
+      const entries: unknown[] = [];
+      const created = {
+        _id: ID,
+        relevamiento: ID,
+        comercio: ID,
+        producto: ID,
+        valor: 1500,
+        oferta: true,
+        observacion: "oferta",
+        fechaRelevamiento: FECHA_INICIO,
+      };
+      const m = models({
+        precio: { create: async () => created },
+        auditoria: {
+          create: async (entry: unknown) => {
+            entries.push(entry);
+            return entry;
+          },
+        },
+      });
+
+      await call("create", m, { body: { ...body, oferta: true } });
+
+      assert.deepEqual(entries, [
+        {
+          precio: ID,
+          relevamiento: ID,
+          comercio: ID,
+          producto: ID,
+          accion: "CREACION",
+          usuario: ME,
+          rol: "ENCUESTADOR",
+          anterior: null,
+          posterior: { valor: 1500, oferta: true, observacion: "oferta", fechaRelevamiento: FECHA_INICIO },
+        },
+      ]);
+    });
+
+    it("still answers 201 when the audit entry cannot be written", async () => {
+      const logged = mock.method(console, "error", () => {});
+      const m = models({
+        precio: { create: async (data: object) => data },
+        auditoria: {
+          create: async () => {
+            throw new Error("db down");
+          },
+        },
+      });
+
+      const res = await call("create", m, { body });
+
+      assert.equal(res.statusCode, 201);
+      assert.equal(logged.mock.callCount(), 1);
+      logged.mock.restore();
     });
 
     it("answers 404 for a missing relevamiento and 409 for a CERRADO one", async () => {
@@ -178,6 +254,16 @@ describe("precio controller", () => {
       assert.equal(captured.limit, 50);
     });
 
+    it("filters by oferta as a boolean", async () => {
+      const { m, captured } = listModels();
+
+      await call("list", m, { query: { oferta: "true" } }, ANALISTA);
+      assert.deepEqual(captured.filter, { oferta: true });
+
+      await call("list", m, { query: { oferta: "false" } }, ANALISTA);
+      assert.deepEqual(captured.filter, { oferta: false });
+    });
+
     it("computes skip from page and limit", async () => {
       const { m, captured } = listModels();
 
@@ -229,6 +315,82 @@ describe("precio controller", () => {
       assert.deepEqual(update, { $set: { valor: 99, observacion: "ok" } });
     });
 
+    it("lets the owner switch oferta", async () => {
+      let update: unknown;
+      const m = models({
+        precio: {
+          findById: async () => precio,
+          findOneAndUpdate: async (_f: unknown, u: unknown) => {
+            update = u;
+            return { ...precio, oferta: true };
+          },
+        },
+      });
+
+      await call("update", m, { params: { id: ID }, body: { oferta: true } });
+
+      assert.deepEqual(update, { $set: { oferta: true } });
+    });
+
+    it("records a MODIFICACION entry with the previous and the new values", async () => {
+      const entries: unknown[] = [];
+      const before = { ...precio, valor: 100, oferta: false, observacion: "viejo", fechaRelevamiento: FECHA_INICIO };
+      const m = models({
+        precio: {
+          findById: async () => before,
+          findOneAndUpdate: async () => ({ ...before, valor: 99, observacion: "nuevo" }),
+        },
+        auditoria: {
+          create: async (entry: unknown) => {
+            entries.push(entry);
+            return entry;
+          },
+        },
+      });
+
+      await call("update", m, { params: { id: ID }, body: { valor: 99, observacion: "nuevo" } });
+
+      assert.deepEqual(entries, [
+        {
+          precio: ID,
+          relevamiento: ID,
+          comercio: ID,
+          producto: undefined,
+          accion: "MODIFICACION",
+          usuario: ME,
+          rol: "ENCUESTADOR",
+          anterior: { valor: 100, oferta: false, observacion: "viejo", fechaRelevamiento: FECHA_INICIO },
+          posterior: { valor: 99, oferta: false, observacion: "nuevo", fechaRelevamiento: FECHA_INICIO },
+        },
+      ]);
+    });
+
+    it("records a ELIMINACION entry that keeps the deleted values", async () => {
+      const entries: unknown[] = [];
+      const before = { ...precio, valor: 100, observacion: "x", fechaRelevamiento: FECHA_INICIO };
+      const m = models({
+        precio: { findById: async () => before, deleteOne: async () => ({}) },
+        auditoria: {
+          create: async (entry: unknown) => {
+            entries.push(entry);
+            return entry;
+          },
+        },
+      });
+
+      await call("remove", m, { params: { id: ID } });
+
+      const entry = entries[0] as Record<string, unknown>;
+      assert.equal(entry["accion"], "ELIMINACION");
+      assert.deepEqual(entry["anterior"], {
+        valor: 100,
+        oferta: false,
+        observacion: "x",
+        fechaRelevamiento: FECHA_INICIO,
+      });
+      assert.equal(entry["posterior"], null);
+    });
+
     it("answers 404 when the precio belongs to someone else", async () => {
       const m = models({ precio: { findById: async () => ({ ...precio, encuestador: ID }) } });
 
@@ -248,6 +410,75 @@ describe("precio controller", () => {
 
       assert.equal((await call("update", closed, { params: { id: ID }, body: { valor: 1 } })).statusCode, 409);
       assert.equal((await call("remove", completed, { params: { id: ID } })).statusCode, 409);
+    });
+
+    describe("supervisor correction", () => {
+      const SUPERVISOR: Auth = { userId: "sup-1", role: "SUPERVISOR" };
+      const other = { ...precio, encuestador: ID };
+
+      it("audits the supervisor as the author of the correction", async () => {
+        const entries: Record<string, unknown>[] = [];
+        const m = models({
+          precio: { findById: async () => other, findOneAndUpdate: async () => ({ ...other, valor: 50 }) },
+          auditoria: {
+            create: async (entry: Record<string, unknown>) => {
+              entries.push(entry);
+              return entry;
+            },
+          },
+        });
+
+        await call("update", m, { params: { id: ID }, body: { valor: 50 } }, SUPERVISOR);
+
+        assert.equal(entries[0]?.["usuario"], "sup-1");
+        assert.equal(entries[0]?.["rol"], "SUPERVISOR");
+      });
+
+      it("lets a supervisor correct another surveyor's precio even after the asignacion is COMPLETADA", async () => {
+        let update: unknown;
+        const m = models({
+          precio: {
+            findById: async () => other,
+            findOneAndUpdate: async (_f: unknown, u: unknown) => {
+              update = u;
+              return { valor: 50 };
+            },
+          },
+          asignacion: { exists: async () => null },
+        });
+
+        const res = await call("update", m, { params: { id: ID }, body: { valor: 50 } }, SUPERVISOR);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(update, { $set: { valor: 50 } });
+      });
+
+      it("still answers 409 once the relevamiento is CERRADO", async () => {
+        const m = models({
+          precio: { findById: async () => other },
+          relevamiento: { findById: async () => ({ estado: "CERRADO" }) },
+        });
+
+        const res = await call("update", m, { params: { id: ID }, body: { valor: 50 } }, SUPERVISOR);
+
+        assert.equal(res.statusCode, 409);
+      });
+
+      it("answers 404 for an unknown precio", async () => {
+        const m = models({ precio: { findById: async () => null } });
+
+        const res = await call("update", m, { params: { id: ID }, body: { valor: 50 } }, SUPERVISOR);
+
+        assert.equal(res.statusCode, 404);
+      });
+
+      it("cannot delete: removal stays with the owner", async () => {
+        const m = models({ precio: { findById: async () => other } });
+
+        const res = await call("remove", m, { params: { id: ID } }, SUPERVISOR);
+
+        assert.equal(res.statusCode, 404);
+      });
     });
 
     it("deletes with 204 for the owner", async () => {

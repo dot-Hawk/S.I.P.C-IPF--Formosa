@@ -5,6 +5,7 @@ import { createAuthenticate } from "../middlewares/authenticate.middleware.js";
 import { authorize } from "../middlewares/authorize.middleware.js";
 import { validateBody } from "../middlewares/validate-body.middleware.js";
 import { Asignacion } from "../models/asignacion.model.js";
+import { PrecioAuditoria } from "../models/precio-auditoria.model.js";
 import { Precio } from "../models/precio.model.js";
 import { Producto } from "../models/producto.model.js";
 import { Relevamiento } from "../models/relevamiento.model.js";
@@ -15,6 +16,7 @@ const controller = createPrecioController({
   relevamiento: Relevamiento,
   asignacion: Asignacion,
   producto: Producto,
+  auditoria: PrecioAuditoria,
 });
 const authenticate = createAuthenticate(getAuthConfig().secret);
 
@@ -30,7 +32,7 @@ precioRouter.post(
 );
 precioRouter.get("/", controller.list);
 precioRouter.get("/:id", controller.getById);
-precioRouter.patch("/:id", authorize("ENCUESTADOR"), validateBody(validatePrecioUpdate), controller.update);
+precioRouter.patch("/:id", authorize("ENCUESTADOR", "SUPERVISOR"), validateBody(validatePrecioUpdate), controller.update);
 precioRouter.delete("/:id", authorize("ENCUESTADOR"), controller.remove);
 
 export default precioRouter;

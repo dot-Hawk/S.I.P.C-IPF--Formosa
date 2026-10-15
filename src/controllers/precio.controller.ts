@@ -4,6 +4,11 @@ import { type AuthPayload } from "../auth/token.service.js";
 import { AUTH_LOCALS_KEY } from "../middlewares/authenticate.middleware.js";
 import { type IAsignacion } from "../models/interfaces/IAsignacion.interface.js";
 import { type IPrecio } from "../models/interfaces/IPrecio.interface.js";
+import {
+  type AccionAuditoria,
+  type IPrecioAuditoria,
+  type PrecioSnapshot,
+} from "../models/interfaces/IPrecioAuditoria.interface.js";
 import { type IProducto } from "../models/interfaces/IProducto.interface.js";
 import { type IRelevamiento } from "../models/interfaces/IRelevamiento.interface.js";
 import { isDuplicateKeyError, isMongooseValidationError } from "../utils/mongo-errors.js";
@@ -18,15 +23,53 @@ export interface PrecioModels {
   relevamiento: Model<IRelevamiento>;
   asignacion: Model<IAsignacion>;
   producto: Model<IProducto>;
+  auditoria: Model<IPrecioAuditoria>;
 }
 
 const FILTER_FIELDS = ["relevamiento", "comercio", "producto", "encuestador"] as const;
+
+function snapshot(precio: IPrecio): PrecioSnapshot {
+  return {
+    valor: precio.valor,
+    oferta: precio.oferta ?? false,
+    observacion: precio.observacion ?? null,
+    fechaRelevamiento: precio.fechaRelevamiento,
+  };
+}
 
 function getAuth(res: Response): AuthPayload | undefined {
   return res.locals[AUTH_LOCALS_KEY] as AuthPayload | undefined;
 }
 
 export function createPrecioController(models: PrecioModels) {
+  // The audit trail must never turn a successful change into an error response: if it cannot be
+  // written, the entry is logged so it can be recovered.
+  async function audit(
+    accion: AccionAuditoria,
+    auth: AuthPayload,
+    precio: IPrecio,
+    anterior: PrecioSnapshot | null,
+    posterior: PrecioSnapshot | null,
+  ): Promise<void> {
+    const entry = {
+      precio: precio._id,
+      relevamiento: precio.relevamiento,
+      comercio: precio.comercio,
+      producto: precio.producto,
+      accion,
+      usuario: auth.userId,
+      rol: auth.role,
+      anterior,
+      posterior,
+    };
+
+    try {
+      await models.auditoria.create(entry);
+    } catch (error) {
+      console.error("Failed to record precio audit entry", entry, error);
+    }
+  }
+
   function isVisibleTo(precio: IPrecio, auth: AuthPayload): boolean {
     return auth.role !== "ENCUESTADOR" || String(precio.encuestador) === auth.userId;
   }
@@ -45,9 +88,15 @@ export function createPrecioController(models: PrecioModels) {
     return found !== null;
   }
 
-  // Shared guard for editing or deleting: the owner, while the relevamiento is open
-  // and the asignacion is still EN_CURSO. Responds and returns null when not allowed.
-  async function loadEditable(req: Request, res: Response): Promise<IPrecio | null> {
+  // Shared guard for editing or deleting. The owner may act while the relevamiento is open
+  // and the asignacion is still EN_CURSO. With `allowSupervisor`, a SUPERVISOR may act on any
+  // precio (also after the asignacion is COMPLETADA) but still only while the relevamiento is
+  // open, since closing freezes the data. Responds and returns null when not allowed.
+  async function loadEditable(
+    req: Request,
+    res: Response,
+    { allowSupervisor = false } = {},
+  ): Promise<IPrecio | null> {
     const auth = getAuth(res);
     if (!auth) {
       res.status(401).json({ message: "Authentication required" });
@@ -60,8 +109,10 @@ export function createPrecioController(models: PrecioModels) {
       return null;
     }
 
+    const asSupervisor = allowSupervisor && auth.role === "SUPERVISOR";
+
     const precio = await models.precio.findById(id);
-    if (!precio || String(precio.encuestador) !== auth.userId) {
+    if (!precio || (!asSupervisor && String(precio.encuestador) !== auth.userId)) {
       res.status(404).json({ message: "Precio not found" });
       return null;
     }
@@ -71,6 +122,8 @@ export function createPrecioController(models: PrecioModels) {
       res.status(409).json({ message: "Relevamiento is not ABIERTO" });
       return null;
     }
+
+    if (asSupervisor) return precio;
 
     if (!(await hasEnCursoAsignacion(precio.relevamiento, precio.comercio, auth.userId))) {
       res.status(409).json({ message: "The asignacion is no longer EN_CURSO" });
@@ -88,7 +141,7 @@ export function createPrecioController(models: PrecioModels) {
         return;
       }
 
-      const { relevamiento: relevamientoId, comercio, producto: productoId, valor, observacion } = req.body;
+      const { relevamiento: relevamientoId, comercio, producto: productoId, valor, observacion, oferta } = req.body;
 
       const relevamiento = await models.relevamiento.findById(relevamientoId);
       if (!relevamiento) {
@@ -130,12 +183,14 @@ export function createPrecioController(models: PrecioModels) {
         comercio,
         encuestador: auth.userId,
         valor,
+        oferta: oferta ?? false,
         fechaRelevamiento,
       };
       if (observacion !== undefined) data["observacion"] = observacion.trim();
 
       try {
         const precio = await models.precio.create(data);
+        await audit("CREACION", auth, precio, null, snapshot(precio));
         res.status(201).json(precio);
       } catch (error) {
         if (isDuplicateKeyError(error)) {
@@ -163,12 +218,13 @@ export function createPrecioController(models: PrecioModels) {
         return;
       }
 
-      const filter: Record<string, string> = {};
+      const filter: Record<string, string | boolean> = {};
       for (const field of FILTER_FIELDS) {
         const value = req.query[field];
         if (typeof value === "string") filter[field] = value;
       }
       if (auth.role === "ENCUESTADOR") filter["encuestador"] = auth.userId;
+      if (req.query["oferta"] !== undefined) filter["oferta"] = req.query["oferta"] === "true";
 
       const limit = typeof req.query["limit"] === "string" ? Number(req.query["limit"]) : DEFAULT_PAGE_SIZE;
       const page = typeof req.query["page"] === "string" ? Number(req.query["page"]) : 1;
@@ -205,12 +261,14 @@ export function createPrecioController(models: PrecioModels) {
     },
 
     async update(req: Request, res: Response): Promise<void> {
-      const precio = await loadEditable(req, res);
-      if (!precio) return;
+      const precio = await loadEditable(req, res, { allowSupervisor: true });
+      const auth = getAuth(res);
+      if (!precio || !auth) return;
 
       const updates: Record<string, unknown> = {};
       if (req.body.valor !== undefined) updates["valor"] = req.body.valor;
       if (req.body.observacion !== undefined) updates["observacion"] = req.body.observacion.trim();
+      if (req.body.oferta !== undefined) updates["oferta"] = req.body.oferta;
 
       try {
         const updated = await models.precio.findOneAndUpdate(
@@ -218,6 +276,12 @@ export function createPrecioController(models: PrecioModels) {
           { $set: updates },
           { new: true, runValidators: true },
         );
+        if (!updated) {
+          res.status(404).json({ message: "Precio not found" });
+          return;
+        }
+
+        await audit("MODIFICACION", auth, precio, snapshot(precio), snapshot(updated));
         res.json(updated);
       } catch (error) {
         if (isMongooseValidationError(error)) {
@@ -230,9 +294,11 @@ export function createPrecioController(models: PrecioModels) {
 
     async remove(req: Request, res: Response): Promise<void> {
       const precio = await loadEditable(req, res);
-      if (!precio) return;
+      const auth = getAuth(res);
+      if (!precio || !auth) return;
 
       await models.precio.deleteOne({ _id: precio._id });
+      await audit("ELIMINACION", auth, precio, snapshot(precio), null);
       res.status(204).end();
     },
   };

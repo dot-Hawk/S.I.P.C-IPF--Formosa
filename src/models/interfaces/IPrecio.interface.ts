@@ -6,6 +6,8 @@ export interface IPrecio extends Document {
   comercio: Types.ObjectId;
   encuestador: Types.ObjectId;
   valor: number;
+  // Price taken from a promotion; kept as registered so results can be split with/without offers.
+  oferta: boolean;
   fechaRelevamiento: Date;
   observacion?: string;
   createdAt: Date;
