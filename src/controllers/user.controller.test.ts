@@ -1,33 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
-import { type Request, type Response } from "express";
-import { type Model } from "mongoose";
-import { type IUser } from "../models/interfaces/IUser.interface.js";
+import { type UserRepository } from "../repositories/user.repository.js";
+import { invoke } from "../testing/http.js";
 import { createUserController } from "./user.controller.js";
-
-interface FakeResponse {
-  statusCode: number;
-  body: unknown;
-  status(code: number): FakeResponse;
-  json(payload: unknown): FakeResponse;
-}
-
-function fakeResponse(): FakeResponse {
-  const res: FakeResponse = {
-    statusCode: 200,
-    body: undefined,
-    status(code) {
-      res.statusCode = code;
-      return res;
-    },
-    json(payload) {
-      res.body = payload;
-      return res;
-    },
-  };
-  return res;
-}
 
 const BODY = {
   nombre: "Ana",
@@ -39,60 +15,62 @@ const BODY = {
   role: "ANALISTA",
 };
 
-function create(model: object, body: Record<string, unknown> = BODY) {
-  const res = fakeResponse();
-  return createUserController(model as unknown as Model<IUser>)
-    .create({ body } as unknown as Request, res as unknown as Response)
-    .then(() => res);
+function create(repo: Partial<UserRepository>, body: Record<string, unknown> = BODY) {
+  return invoke(createUserController(repo as UserRepository).create, { body });
 }
 
 describe("user controller create", () => {
   it("hashes the password, forces ACTIVO and never returns the hash", async () => {
     let received: Record<string, unknown> | undefined;
-    const model = {
+    const repo = {
       create: async (data: Record<string, unknown>) => {
         received = data;
-        return { _id: "64b000000000000000000001", ...data };
+        return { id: "u-1", ...data };
       },
     };
 
-    const res = await create(model, { ...BODY, estado: "INACTIVO" });
+    const res = await create(repo as unknown as Partial<UserRepository>, { ...BODY, estado: "INACTIVO" });
 
     assert.equal(res.statusCode, 201);
     assert.equal(received?.["estado"], "ACTIVO");
     assert.notEqual(received?.["passwordHash"], BODY.password);
     assert.ok(await bcrypt.compare(BODY.password, String(received?.["passwordHash"])));
+    assert.equal((res.body as { id: string }).id, "u-1");
     assert.equal("passwordHash" in (res.body as object), false);
     assert.equal("password" in (res.body as object), false);
   });
 
-  it("answers 409 on duplicate dni, legajo or email", async () => {
-    const model = {
-      create: async () => {
-        throw Object.assign(new Error("duplicate"), { code: 11000 });
+  it("stores the email trimmed and lowercase", async () => {
+    let received: Record<string, unknown> | undefined;
+    const repo = {
+      create: async (data: Record<string, unknown>) => {
+        received = data;
+        return { id: "u-1", ...data };
       },
     };
 
-    assert.equal((await create(model)).statusCode, 409);
+    await create(repo as unknown as Partial<UserRepository>, { ...BODY, email: "  Ana@Example.COM " });
+
+    assert.equal(received?.["email"], "ana@example.com");
   });
 
-  it("answers 400 on a mongoose validation error", async () => {
-    const model = {
+  it("answers 409 on duplicate dni, legajo or email", async () => {
+    const repo = {
       create: async () => {
-        throw Object.assign(new Error("invalid"), { name: "ValidationError" });
+        throw Object.assign(new Error("Failed query"), { cause: { code: "23505" } });
       },
     };
 
-    assert.equal((await create(model)).statusCode, 400);
+    assert.equal((await create(repo as unknown as Partial<UserRepository>)).statusCode, 409);
   });
 
   it("rethrows unexpected errors", async () => {
-    const model = {
+    const repo = {
       create: async () => {
         throw new Error("connection lost");
       },
     };
 
-    await assert.rejects(create(model), /connection lost/);
+    await assert.rejects(create(repo as unknown as Partial<UserRepository>), /connection lost/);
   });
 });

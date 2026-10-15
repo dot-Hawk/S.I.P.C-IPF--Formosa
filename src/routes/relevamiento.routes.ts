@@ -4,9 +4,10 @@ import { createRelevamientoController } from "../controllers/relevamiento.contro
 import { createAuthenticate } from "../middlewares/authenticate.middleware.js";
 import { authorize } from "../middlewares/authorize.middleware.js";
 import { validateRelevamiento } from "../middlewares/validate-relevamiento.middleware.js";
-import { Relevamiento } from "../models/relevamiento.model.js";
+import { getDb } from "../db/index.js";
+import { createRelevamientoRepository } from "../repositories/relevamiento.repository.js";
 
-const controller = createRelevamientoController(Relevamiento);
+const controller = createRelevamientoController(createRelevamientoRepository(getDb()));
 const authenticate = createAuthenticate(getAuthConfig().secret);
 
 const relevamientoRouter = Router();

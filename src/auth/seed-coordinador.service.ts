@@ -1,6 +1,5 @@
 import bcrypt from "bcryptjs";
-import { type Model } from "mongoose";
-import { type IUser } from "../models/interfaces/IUser.interface.js";
+import { type UserRepository } from "../repositories/user.repository.js";
 import { validateUserInput } from "../validators/user.validator.js";
 
 const BCRYPT_ROUNDS = 10;
@@ -17,7 +16,7 @@ export interface SeedCoordinadorInput {
 export type SeedCoordinadorResult = { created: true } | { created: false; reason: string };
 
 export async function seedCoordinador(
-  userModel: Model<IUser>,
+  users: UserRepository,
   input: SeedCoordinadorInput,
 ): Promise<SeedCoordinadorResult> {
   const validation = validateUserInput({ ...input, role: "COORDINADOR" });
@@ -26,7 +25,7 @@ export async function seedCoordinador(
     throw new Error(`Invalid seed input - ${details}`);
   }
 
-  if (await userModel.exists({ role: "COORDINADOR" })) {
+  if (await users.hasRole("COORDINADOR")) {
     return { created: false, reason: "a COORDINADOR user already exists" };
   }
 
@@ -34,12 +33,12 @@ export async function seedCoordinador(
   const { nombre, apellido, dni, legajo, email, password } = input as Record<keyof SeedCoordinadorInput, string>;
   const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
-  await userModel.create({
+  await users.create({
     nombre,
     apellido,
     dni,
     legajo,
-    email,
+    email: email.trim().toLowerCase(),
     passwordHash,
     role: "COORDINADOR",
     estado: "ACTIVO",

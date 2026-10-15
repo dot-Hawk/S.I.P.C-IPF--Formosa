@@ -1,4 +1,4 @@
-import { ROLES } from "../models/interfaces/IUser.interface.js";
+import { ROLES } from "../domain/enums.js";
 import { type ValidationError, type ValidationResult } from "./validation.js";
 
 const REQUIRED_TEXT_FIELDS = ["nombre", "apellido", "dni", "legajo"] as const;

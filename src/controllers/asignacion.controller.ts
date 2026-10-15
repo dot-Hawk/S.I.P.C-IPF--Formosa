@@ -1,21 +1,24 @@
 import { type Request, type Response } from "express";
-import { type Model } from "mongoose";
 import { type AuthPayload } from "../auth/token.service.js";
 import { canTransition } from "../domain/asignacion.rules.js";
 import { AUTH_LOCALS_KEY } from "../middlewares/authenticate.middleware.js";
-import { type IAsignacion } from "../models/interfaces/IAsignacion.interface.js";
-import { type IComercio } from "../models/interfaces/IComercio.interface.js";
-import { type IRelevamiento } from "../models/interfaces/IRelevamiento.interface.js";
-import { type IUser } from "../models/interfaces/IUser.interface.js";
-import { isDuplicateKeyError } from "../utils/mongo-errors.js";
-import { isObjectIdString } from "../utils/object-id.js";
+import { type Asignacion } from "../db/schema.js";
+import {
+  type AsignacionFilter,
+  type AsignacionRepository,
+} from "../repositories/asignacion.repository.js";
+import { type ComercioRepository } from "../repositories/comercio.repository.js";
+import { type RelevamientoRepository } from "../repositories/relevamiento.repository.js";
+import { type UserRepository } from "../repositories/user.repository.js";
+import { isUniqueViolation } from "../utils/db-errors.js";
+import { isUuid } from "../utils/uuid.js";
 import { validateAsignacionFilters } from "../validators/asignacion.validator.js";
 
-export interface AsignacionModels {
-  asignacion: Model<IAsignacion>;
-  relevamiento: Model<IRelevamiento>;
-  user: Model<IUser>;
-  comercio: Model<IComercio>;
+export interface AsignacionRepositories {
+  asignaciones: AsignacionRepository;
+  relevamientos: RelevamientoRepository;
+  users: UserRepository;
+  comercios: ComercioRepository;
 }
 
 const FILTER_FIELDS = ["relevamiento", "encuestador", "comercio", "estado"] as const;
@@ -24,14 +27,14 @@ function getAuth(res: Response): AuthPayload | undefined {
   return res.locals[AUTH_LOCALS_KEY] as AuthPayload | undefined;
 }
 
-export function createAsignacionController(models: AsignacionModels) {
+export function createAsignacionController(repos: AsignacionRepositories) {
   // An ENCUESTADOR only ever sees their own asignaciones; others are reported as not found.
-  function isVisibleTo(asignacion: IAsignacion, auth: AuthPayload): boolean {
-    return auth.role !== "ENCUESTADOR" || String(asignacion.encuestador) === auth.userId;
+  function isVisibleTo(asignacion: Asignacion, auth: AuthPayload): boolean {
+    return auth.role !== "ENCUESTADOR" || asignacion.encuestador === auth.userId;
   }
 
   async function findAssignableEncuestadorProblem(encuestadorId: string): Promise<string | null> {
-    const encuestador = await models.user.findById(encuestadorId);
+    const encuestador = await repos.users.findById(encuestadorId);
 
     if (!encuestador) return "Encuestador not found";
     if (encuestador.role !== "ENCUESTADOR" || encuestador.estado !== "ACTIVO") {
@@ -44,7 +47,7 @@ export function createAsignacionController(models: AsignacionModels) {
     async create(req: Request, res: Response): Promise<void> {
       const { relevamiento: relevamientoId, encuestador, comercio: comercioId } = req.body;
 
-      const relevamiento = await models.relevamiento.findById(relevamientoId);
+      const relevamiento = await repos.relevamientos.findById(relevamientoId);
       if (!relevamiento) {
         res.status(404).json({ message: "Relevamiento not found" });
         return;
@@ -61,7 +64,7 @@ export function createAsignacionController(models: AsignacionModels) {
         return;
       }
 
-      const comercio = await models.comercio.findById(comercioId);
+      const comercio = await repos.comercios.findById(comercioId);
       if (!comercio) {
         res.status(404).json({ message: "Comercio not found" });
         return;
@@ -72,7 +75,7 @@ export function createAsignacionController(models: AsignacionModels) {
       }
 
       try {
-        const asignacion = await models.asignacion.create({
+        const asignacion = await repos.asignaciones.create({
           relevamiento: relevamientoId,
           encuestador,
           comercio: comercioId,
@@ -80,7 +83,7 @@ export function createAsignacionController(models: AsignacionModels) {
         });
         res.status(201).json(asignacion);
       } catch (error) {
-        if (isDuplicateKeyError(error)) {
+        if (isUniqueViolation(error)) {
           res.status(409).json({ message: "This comercio is already assigned in this relevamiento" });
           return;
         }
@@ -108,8 +111,7 @@ export function createAsignacionController(models: AsignacionModels) {
       }
       if (auth.role === "ENCUESTADOR") filter["encuestador"] = auth.userId;
 
-      const asignaciones = await models.asignacion.find(filter).sort({ createdAt: -1 });
-      res.json(asignaciones);
+      res.json(await repos.asignaciones.list(filter as AsignacionFilter));
     },
 
     async getById(req: Request, res: Response): Promise<void> {
@@ -120,12 +122,12 @@ export function createAsignacionController(models: AsignacionModels) {
       }
 
       const id = req.params["id"];
-      if (!isObjectIdString(id)) {
+      if (!isUuid(id)) {
         res.status(400).json({ message: "Invalid asignacion id" });
         return;
       }
 
-      const asignacion = await models.asignacion.findById(id);
+      const asignacion = await repos.asignaciones.findById(id);
       if (!asignacion || !isVisibleTo(asignacion, auth)) {
         res.status(404).json({ message: "Asignacion not found" });
         return;
@@ -142,12 +144,12 @@ export function createAsignacionController(models: AsignacionModels) {
       }
 
       const id = req.params["id"];
-      if (!isObjectIdString(id)) {
+      if (!isUuid(id)) {
         res.status(400).json({ message: "Invalid asignacion id" });
         return;
       }
 
-      const asignacion = await models.asignacion.findById(id);
+      const asignacion = await repos.asignaciones.findById(id);
       if (!asignacion || !isVisibleTo(asignacion, auth)) {
         res.status(404).json({ message: "Asignacion not found" });
         return;
@@ -159,19 +161,14 @@ export function createAsignacionController(models: AsignacionModels) {
         return;
       }
 
-      const relevamiento = await models.relevamiento.findById(asignacion.relevamiento);
+      const relevamiento = await repos.relevamientos.findById(asignacion.relevamiento);
       if (!relevamiento || relevamiento.estado !== "ABIERTO") {
         res.status(409).json({ message: "Relevamiento is not ABIERTO" });
         return;
       }
 
       // Conditional on the estado we just read, so a concurrent change cannot be overwritten.
-      const updated = await models.asignacion.findOneAndUpdate(
-        { _id: id, estado: asignacion.estado },
-        { estado: target },
-        { new: true },
-      );
-
+      const updated = await repos.asignaciones.transitionEstado(id, asignacion.estado, target);
       if (!updated) {
         res.status(409).json({ message: "Asignacion was modified concurrently, try again" });
         return;
@@ -182,7 +179,7 @@ export function createAsignacionController(models: AsignacionModels) {
 
     async reassign(req: Request, res: Response): Promise<void> {
       const id = req.params["id"];
-      if (!isObjectIdString(id)) {
+      if (!isUuid(id)) {
         res.status(400).json({ message: "Invalid asignacion id" });
         return;
       }
@@ -194,19 +191,13 @@ export function createAsignacionController(models: AsignacionModels) {
         return;
       }
 
-      // Only a PENDIENTE asignacion can change hands, enforced atomically.
-      const updated = await models.asignacion.findOneAndUpdate(
-        { _id: id, estado: "PENDIENTE" },
-        { encuestador: req.body.encuestador },
-        { new: true },
-      );
-
+      const updated = await repos.asignaciones.reassignIfPendiente(id, req.body.encuestador);
       if (updated) {
         res.json(updated);
         return;
       }
 
-      if (await models.asignacion.exists({ _id: id })) {
+      if (await repos.asignaciones.findById(id)) {
         res.status(409).json({ message: "Only a PENDIENTE asignacion can be reassigned" });
         return;
       }

@@ -1,4 +1,4 @@
-import { type CategoriaCanasta } from "../models/interfaces/ICanastaNodo.interface.js";
+import { type CategoriaCanasta } from "./enums.js";
 import { type CanastaSource, type RawNodo } from "./canasta.js";
 
 export type SheetRows = unknown[][];

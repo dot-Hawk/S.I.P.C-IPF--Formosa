@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { validateAuditoriaFilters } from "./auditoria.validator.js";
 
-const ID = "507f1f77bcf86cd799439011";
+const ID = "00000000-0000-4000-8000-000000000011";
 
 function fields(result: { errors: { field: string }[] }): string[] {
   return result.errors.map((e) => e.field).sort();

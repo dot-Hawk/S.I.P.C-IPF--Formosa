@@ -1,5 +1,5 @@
 import jwt, { type SignOptions } from "jsonwebtoken";
-import { ROLES, type Role } from "../models/interfaces/IUser.interface.js";
+import { ROLES, type Role } from "../domain/enums.js";
 
 export interface AuthPayload {
   userId: string;

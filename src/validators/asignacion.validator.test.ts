@@ -7,7 +7,7 @@ import {
   validateAsignacionReassign,
 } from "./asignacion.validator.js";
 
-const ID = "507f1f77bcf86cd799439011";
+const ID = "00000000-0000-4000-8000-000000000011";
 
 function fields(result: { errors: { field: string }[] }): string[] {
   return result.errors.map((e) => e.field).sort();
@@ -24,7 +24,7 @@ describe("validateAsignacionCreate", () => {
     assert.deepEqual(fields(result), ["comercio", "encuestador", "relevamiento"]);
   });
 
-  it("rejects a 12-character string that mongoose would cast", () => {
+  it("rejects an ObjectId-like string", () => {
     assert.deepEqual(
       fields(validateAsignacionCreate({ relevamiento: "123456789012", encuestador: ID, comercio: ID })),
       ["relevamiento"],

@@ -2,24 +2,23 @@ import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { type Server } from "node:http";
 import { type AddressInfo } from "node:net";
-import mongoose from "mongoose";
 
-// Integration test: boots the real Express app against a real MongoDB and walks the whole flow.
+// Integration test: boots the real Express app against a real PostgreSQL and walks the whole flow.
 //
-//   MONGO_TEST_URI=mongodb://127.0.0.1:27017/sipc_integration_test npm run test:integration
+//   DATABASE_TEST_URL=postgres://postgres:test@127.0.0.1:5433/sipc_integration_test npm run test:integration
 //
-// The database is DROPPED before and after the run, so the name must contain "test".
+// The schema is DROPPED before and after the run, so the database name must contain "test".
 
-const MONGO_TEST_URI = process.env["MONGO_TEST_URI"];
+const DATABASE_TEST_URL = process.env["DATABASE_TEST_URL"];
 
 function databaseName(uri: string): string {
   return new URL(uri).pathname.replace(/^\//, "");
 }
 
-const skipReason = !MONGO_TEST_URI
-  ? "MONGO_TEST_URI is not set"
-  : !/test/i.test(databaseName(MONGO_TEST_URI))
-    ? 'MONGO_TEST_URI database name must contain "test" because the database is dropped'
+const skipReason = !DATABASE_TEST_URL
+  ? "DATABASE_TEST_URL is not set"
+  : !/test/i.test(databaseName(DATABASE_TEST_URL))
+    ? 'DATABASE_TEST_URL database name must contain "test" because its schema is dropped'
     : false;
 
 interface ApiResponse {
@@ -32,9 +31,18 @@ const COORDINADOR_EMAIL = "coord@integration.test";
 const COORDINADOR_PASSWORD = "coordinador-pass-1";
 const PASSWORD = "password-largo-1";
 
-describe("API flow (real MongoDB)", { skip: skipReason }, () => {
+describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
   let server: Server;
   let baseUrl: string;
+  let db: typeof import("../../src/db/index.js") | undefined;
+
+  // Drops everything the app created, including drizzle's migrations bookkeeping.
+  async function resetSchema(): Promise<void> {
+    const { pool } = (db as NonNullable<typeof db>).getDbHandle();
+    await pool.query("DROP SCHEMA IF EXISTS drizzle CASCADE");
+    await pool.query("DROP SCHEMA public CASCADE");
+    await pool.query("CREATE SCHEMA public");
+  }
 
   async function api(
     method: string,
@@ -73,20 +81,21 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
 
   before(async () => {
     process.env["JWT_SECRET"] = "integration-test-secret";
+    process.env["DATABASE_URL"] = DATABASE_TEST_URL as string;
 
-    await mongoose.connect(MONGO_TEST_URI as string);
-    await mongoose.connection.dropDatabase();
+    const dbModule = await import("../../src/db/index.js");
+    db = dbModule;
+    await resetSchema();
+    const { runMigrations } = await import("../../src/db/migrate.js");
+    await runMigrations();
 
-    const [{ default: app }, { seedCoordinador }, { User }] = await Promise.all([
+    const [{ default: app }, { seedCoordinador }, { createUserRepository }] = await Promise.all([
       import("../../src/app.js"),
       import("../../src/auth/seed-coordinador.service.js"),
-      import("../../src/models/user.model.js"),
+      import("../../src/repositories/user.repository.js"),
     ]);
 
-    // Build indexes now so unique constraints are enforced from the first request.
-    await mongoose.syncIndexes();
-
-    const seeded = await seedCoordinador(User, {
+    const seeded = await seedCoordinador(createUserRepository(dbModule.getDb()), {
       nombre: "Coord",
       apellido: "Uno",
       dni: "10000001",
@@ -97,10 +106,10 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
     assert.deepEqual(seeded, { created: true });
 
     // A tiny basket (one subtree with two variedades) built with the real import code.
-    const [{ buildCanasta }, { importCanasta }, { CanastaNodo }] = await Promise.all([
+    const [{ buildCanasta }, { importCanasta }, { createCanastaRepository }] = await Promise.all([
       import("../../src/domain/canasta.js"),
       import("../../src/services/canasta-import.service.js"),
-      import("../../src/models/canasta-nodo.model.js"),
+      import("../../src/repositories/canasta.repository.js"),
     ]);
     const chain = { producto: "11111", subclase: "1111", clase: "111", grupo: "11", division: "1" };
     const basket = buildCanasta({
@@ -118,7 +127,7 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
       codigos12: {},
       tratamientoEspecial: [],
     });
-    await importCanasta(CanastaNodo, basket.nodos);
+    await importCanasta(createCanastaRepository(dbModule.getDb()), basket.nodos);
 
     server = await new Promise<Server>((resolve) => {
       const s = app.listen(0, "127.0.0.1", () => resolve(s));
@@ -128,17 +137,17 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
 
   after(async () => {
     server?.close();
-    if (mongoose.connection.readyState === 1) {
-      await mongoose.connection.dropDatabase();
-      await mongoose.disconnect();
+    if (db) {
+      await resetSchema();
+      await db.closeDb();
     }
   });
 
   it("seed is idempotent", async () => {
     const { seedCoordinador } = await import("../../src/auth/seed-coordinador.service.js");
-    const { User } = await import("../../src/models/user.model.js");
+    const { createUserRepository } = await import("../../src/repositories/user.repository.js");
 
-    const again = await seedCoordinador(User, {
+    const again = await seedCoordinador(createUserRepository((db as NonNullable<typeof db>).getDb()), {
       nombre: "Otro",
       apellido: "Coord",
       dni: "10000002",
@@ -216,7 +225,7 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
       body: { nombre: "Super Integration", direccion: "Calle 1", zona: "Centro", tipo: "SUPERMERCADO" },
     });
     assert.equal(comercio.status, 201);
-    state.comercioId = comercio.body._id;
+    state.comercioId = comercio.body.id;
 
     const producto = await api("POST", "/api/productos", {
       token: coord.token,
@@ -235,8 +244,8 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
     });
     assert.equal(producto.status, 201);
     assert.equal(producto2.status, 201);
-    state.productoId = producto.body._id;
-    state.producto2Id = producto2.body._id;
+    state.productoId = producto.body.id;
+    state.producto2Id = producto2.body.id;
 
     const sameButCase = await api("POST", "/api/productos", {
       token: coord.token,
@@ -299,7 +308,7 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
     const created = await api("POST", "/api/relevamientos", { token: state.coord.token, body });
     assert.equal(created.status, 201);
     assert.equal(created.body.estado, "ABIERTO");
-    state.relevamientoId = created.body._id;
+    state.relevamientoId = created.body.id;
 
     assert.equal((await api("POST", "/api/relevamientos", { token: state.coord.token, body })).status, 409);
     const badFormat = await api("POST", "/api/relevamientos", {
@@ -321,7 +330,7 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
     const created = await api("POST", "/api/asignaciones", { token: coord.token, body });
     assert.equal(created.status, 201);
     assert.equal(created.body.estado, "PENDIENTE");
-    state.asignacionId = created.body._id;
+    state.asignacionId = created.body.id;
 
     const duplicate = await api("POST", "/api/asignaciones", { token: coord.token, body: { ...body, encuestador: b.id } });
     assert.equal(duplicate.status, 409);
@@ -374,7 +383,7 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
     const created = await api("POST", "/api/precios", { token: a.token, body: { ...precio, encuestador: b.id } });
     assert.equal(created.status, 201);
     assert.equal(created.body.encuestador, a.id);
-    state.precioId = created.body._id;
+    state.precioId = created.body.id;
 
     assert.equal((await api("POST", "/api/precios", { token: a.token, body: precio })).status, 409);
     const second = { ...precio, producto: state.producto2Id };
@@ -464,7 +473,7 @@ describe("API flow (real MongoDB)", { skip: skipReason }, () => {
       body: { relevamiento: state.relevamientoId, encuestador: b.id, comercio: state.comercioId },
     });
     assert.equal(lateAssignment.status, 409);
-    const missing = await api("PATCH", "/api/relevamientos/507f1f77bcf86cd799439099/cerrar", { token: coord.token });
+    const missing = await api("PATCH", "/api/relevamientos/00000000-0000-4000-8000-000000000099/cerrar", { token: coord.token });
     assert.equal(missing.status, 404);
   });
 

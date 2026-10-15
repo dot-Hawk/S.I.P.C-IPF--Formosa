@@ -1,91 +1,41 @@
 import { type Request, type Response } from "express";
-import { type Model } from "mongoose";
 import { type AuthPayload } from "../auth/token.service.js";
+import { type Precio } from "../db/schema.js";
 import { AUTH_LOCALS_KEY } from "../middlewares/authenticate.middleware.js";
-import { type IAsignacion } from "../models/interfaces/IAsignacion.interface.js";
-import { type IPrecio } from "../models/interfaces/IPrecio.interface.js";
+import { type AsignacionRepository } from "../repositories/asignacion.repository.js";
 import {
-  type AccionAuditoria,
-  type IPrecioAuditoria,
-  type PrecioSnapshot,
-} from "../models/interfaces/IPrecioAuditoria.interface.js";
-import { type IProducto } from "../models/interfaces/IProducto.interface.js";
-import { type IRelevamiento } from "../models/interfaces/IRelevamiento.interface.js";
-import { isDuplicateKeyError, isMongooseValidationError } from "../utils/mongo-errors.js";
-import { isObjectIdString } from "../utils/object-id.js";
-import {
-  DEFAULT_PAGE_SIZE,
-  validatePrecioFilters,
-} from "../validators/precio.validator.js";
+  type Actor,
+  type PrecioChanges,
+  type PrecioFilter,
+  type PrecioInput,
+  type PrecioRepository,
+} from "../repositories/precio.repository.js";
+import { type ProductoRepository } from "../repositories/producto.repository.js";
+import { type RelevamientoRepository } from "../repositories/relevamiento.repository.js";
+import { isUniqueViolation } from "../utils/db-errors.js";
+import { isUuid } from "../utils/uuid.js";
+import { DEFAULT_PAGE_SIZE, validatePrecioFilters } from "../validators/precio.validator.js";
 
-export interface PrecioModels {
-  precio: Model<IPrecio>;
-  relevamiento: Model<IRelevamiento>;
-  asignacion: Model<IAsignacion>;
-  producto: Model<IProducto>;
-  auditoria: Model<IPrecioAuditoria>;
+export interface PrecioRepositories {
+  precios: PrecioRepository;
+  relevamientos: RelevamientoRepository;
+  asignaciones: AsignacionRepository;
+  productos: ProductoRepository;
 }
 
 const FILTER_FIELDS = ["relevamiento", "comercio", "producto", "encuestador"] as const;
-
-function snapshot(precio: IPrecio): PrecioSnapshot {
-  return {
-    valor: precio.valor,
-    oferta: precio.oferta ?? false,
-    observacion: precio.observacion ?? null,
-    fechaRelevamiento: precio.fechaRelevamiento,
-  };
-}
 
 function getAuth(res: Response): AuthPayload | undefined {
   return res.locals[AUTH_LOCALS_KEY] as AuthPayload | undefined;
 }
 
-export function createPrecioController(models: PrecioModels) {
-  // The audit trail must never turn a successful change into an error response: if it cannot be
-  // written, the entry is logged so it can be recovered.
-  async function audit(
-    accion: AccionAuditoria,
-    auth: AuthPayload,
-    precio: IPrecio,
-    anterior: PrecioSnapshot | null,
-    posterior: PrecioSnapshot | null,
-  ): Promise<void> {
-    const entry = {
-      precio: precio._id,
-      relevamiento: precio.relevamiento,
-      comercio: precio.comercio,
-      producto: precio.producto,
-      accion,
-      usuario: auth.userId,
-      rol: auth.role,
-      anterior,
-      posterior,
-    };
+function toActor(auth: AuthPayload): Actor {
+  return { userId: auth.userId, role: auth.role };
+}
 
-    try {
-      await models.auditoria.create(entry);
-    } catch (error) {
-      console.error("Failed to record precio audit entry", entry, error);
-    }
-  }
-
-  function isVisibleTo(precio: IPrecio, auth: AuthPayload): boolean {
-    return auth.role !== "ENCUESTADOR" || String(precio.encuestador) === auth.userId;
-  }
-
-  async function hasEnCursoAsignacion(
-    relevamiento: IAsignacion["relevamiento"],
-    comercio: IAsignacion["comercio"],
-    encuestador: string,
-  ): Promise<boolean> {
-    const found = await models.asignacion.exists({
-      relevamiento,
-      comercio,
-      encuestador,
-      estado: "EN_CURSO",
-    });
-    return found !== null;
+export function createPrecioController(repos: PrecioRepositories) {
+  function isVisibleTo(precio: Precio, auth: AuthPayload): boolean {
+    return auth.role !== "ENCUESTADOR" || precio.encuestador === auth.userId;
   }
 
   // Shared guard for editing or deleting. The owner may act while the relevamiento is open
@@ -96,7 +46,7 @@ export function createPrecioController(models: PrecioModels) {
     req: Request,
     res: Response,
     { allowSupervisor = false } = {},
-  ): Promise<IPrecio | null> {
+  ): Promise<{ precio: Precio; auth: AuthPayload } | null> {
     const auth = getAuth(res);
     if (!auth) {
       res.status(401).json({ message: "Authentication required" });
@@ -104,33 +54,33 @@ export function createPrecioController(models: PrecioModels) {
     }
 
     const id = req.params["id"];
-    if (!isObjectIdString(id)) {
+    if (!isUuid(id)) {
       res.status(400).json({ message: "Invalid precio id" });
       return null;
     }
 
     const asSupervisor = allowSupervisor && auth.role === "SUPERVISOR";
 
-    const precio = await models.precio.findById(id);
-    if (!precio || (!asSupervisor && String(precio.encuestador) !== auth.userId)) {
+    const precio = await repos.precios.findById(id);
+    if (!precio || (!asSupervisor && precio.encuestador !== auth.userId)) {
       res.status(404).json({ message: "Precio not found" });
       return null;
     }
 
-    const relevamiento = await models.relevamiento.findById(precio.relevamiento);
+    const relevamiento = await repos.relevamientos.findById(precio.relevamiento);
     if (!relevamiento || relevamiento.estado !== "ABIERTO") {
       res.status(409).json({ message: "Relevamiento is not ABIERTO" });
       return null;
     }
 
-    if (asSupervisor) return precio;
+    if (asSupervisor) return { precio, auth };
 
-    if (!(await hasEnCursoAsignacion(precio.relevamiento, precio.comercio, auth.userId))) {
+    if (!(await repos.asignaciones.hasEnCurso(precio.relevamiento, precio.comercio, auth.userId))) {
       res.status(409).json({ message: "The asignacion is no longer EN_CURSO" });
       return null;
     }
 
-    return precio;
+    return { precio, auth };
   }
 
   return {
@@ -143,7 +93,7 @@ export function createPrecioController(models: PrecioModels) {
 
       const { relevamiento: relevamientoId, comercio, producto: productoId, valor, observacion, oferta } = req.body;
 
-      const relevamiento = await models.relevamiento.findById(relevamientoId);
+      const relevamiento = await repos.relevamientos.findById(relevamientoId);
       if (!relevamiento) {
         res.status(404).json({ message: "Relevamiento not found" });
         return;
@@ -153,14 +103,14 @@ export function createPrecioController(models: PrecioModels) {
         return;
       }
 
-      if (!(await hasEnCursoAsignacion(relevamientoId, comercio, auth.userId))) {
+      if (!(await repos.asignaciones.hasEnCurso(relevamientoId, comercio, auth.userId))) {
         res.status(403).json({
           message: "You have no EN_CURSO asignacion for this comercio in this relevamiento",
         });
         return;
       }
 
-      const producto = await models.producto.findById(productoId);
+      const producto = await repos.productos.findById(productoId);
       if (!producto) {
         res.status(404).json({ message: "Producto not found" });
         return;
@@ -189,16 +139,11 @@ export function createPrecioController(models: PrecioModels) {
       if (observacion !== undefined) data["observacion"] = observacion.trim();
 
       try {
-        const precio = await models.precio.create(data);
-        await audit("CREACION", auth, precio, null, snapshot(precio));
+        const precio = await repos.precios.create(data as PrecioInput, toActor(auth));
         res.status(201).json(precio);
       } catch (error) {
-        if (isDuplicateKeyError(error)) {
+        if (isUniqueViolation(error)) {
           res.status(409).json({ message: "A precio already exists for this producto, comercio and relevamiento" });
-          return;
-        }
-        if (isMongooseValidationError(error)) {
-          res.status(400).json({ message: error.message });
           return;
         }
         throw error;
@@ -229,13 +174,7 @@ export function createPrecioController(models: PrecioModels) {
       const limit = typeof req.query["limit"] === "string" ? Number(req.query["limit"]) : DEFAULT_PAGE_SIZE;
       const page = typeof req.query["page"] === "string" ? Number(req.query["page"]) : 1;
 
-      const precios = await models.precio
-        .find(filter)
-        .sort({ fechaRelevamiento: -1, _id: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit);
-
-      res.json(precios);
+      res.json(await repos.precios.list(filter as PrecioFilter, { limit, offset: (page - 1) * limit }));
     },
 
     async getById(req: Request, res: Response): Promise<void> {
@@ -246,12 +185,12 @@ export function createPrecioController(models: PrecioModels) {
       }
 
       const id = req.params["id"];
-      if (!isObjectIdString(id)) {
+      if (!isUuid(id)) {
         res.status(400).json({ message: "Invalid precio id" });
         return;
       }
 
-      const precio = await models.precio.findById(id);
+      const precio = await repos.precios.findById(id);
       if (!precio || !isVisibleTo(precio, auth)) {
         res.status(404).json({ message: "Precio not found" });
         return;
@@ -261,44 +200,33 @@ export function createPrecioController(models: PrecioModels) {
     },
 
     async update(req: Request, res: Response): Promise<void> {
-      const precio = await loadEditable(req, res, { allowSupervisor: true });
-      const auth = getAuth(res);
-      if (!precio || !auth) return;
+      const loaded = await loadEditable(req, res, { allowSupervisor: true });
+      if (!loaded) return;
 
-      const updates: Record<string, unknown> = {};
-      if (req.body.valor !== undefined) updates["valor"] = req.body.valor;
-      if (req.body.observacion !== undefined) updates["observacion"] = req.body.observacion.trim();
-      if (req.body.oferta !== undefined) updates["oferta"] = req.body.oferta;
+      const changes: PrecioChanges = {};
+      if (req.body.valor !== undefined) changes.valor = req.body.valor;
+      if (req.body.observacion !== undefined) changes.observacion = req.body.observacion.trim();
+      if (req.body.oferta !== undefined) changes.oferta = req.body.oferta;
 
-      try {
-        const updated = await models.precio.findOneAndUpdate(
-          { _id: precio._id },
-          { $set: updates },
-          { new: true, runValidators: true },
-        );
-        if (!updated) {
-          res.status(404).json({ message: "Precio not found" });
-          return;
-        }
-
-        await audit("MODIFICACION", auth, precio, snapshot(precio), snapshot(updated));
-        res.json(updated);
-      } catch (error) {
-        if (isMongooseValidationError(error)) {
-          res.status(400).json({ message: error.message });
-          return;
-        }
-        throw error;
+      const updated = await repos.precios.update(loaded.precio.id, changes, toActor(loaded.auth));
+      if (!updated) {
+        res.status(404).json({ message: "Precio not found" });
+        return;
       }
+
+      res.json(updated);
     },
 
     async remove(req: Request, res: Response): Promise<void> {
-      const precio = await loadEditable(req, res);
-      const auth = getAuth(res);
-      if (!precio || !auth) return;
+      const loaded = await loadEditable(req, res);
+      if (!loaded) return;
 
-      await models.precio.deleteOne({ _id: precio._id });
-      await audit("ELIMINACION", auth, precio, snapshot(precio), null);
+      const removed = await repos.precios.remove(loaded.precio.id, toActor(loaded.auth));
+      if (!removed) {
+        res.status(404).json({ message: "Precio not found" });
+        return;
+      }
+
       res.status(204).end();
     },
   };

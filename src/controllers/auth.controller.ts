@@ -1,15 +1,14 @@
 import bcrypt from "bcryptjs";
 import { type Request, type Response } from "express";
-import { type Model } from "mongoose";
 import { signToken } from "../auth/token.service.js";
 import { type AuthConfig } from "../config/auth.js";
-import { type IUser } from "../models/interfaces/IUser.interface.js";
+import { type UserRepository } from "../repositories/user.repository.js";
 
 const BCRYPT_ROUNDS = 10;
 // Compared against when the email is unknown, so response time does not reveal which emails exist.
 const DUMMY_HASH = bcrypt.hashSync("dummy-password", BCRYPT_ROUNDS);
 
-export function createAuthController(userModel: Model<IUser>, config: AuthConfig) {
+export function createAuthController(users: UserRepository, config: AuthConfig) {
   return {
     async login(req: Request, res: Response): Promise<void> {
       const { email, password } = req.body ?? {};
@@ -19,7 +18,7 @@ export function createAuthController(userModel: Model<IUser>, config: AuthConfig
         return;
       }
 
-      const user = await userModel.findOne({ email: email.trim().toLowerCase() });
+      const user = await users.findByEmail(email.trim().toLowerCase());
       const passwordMatches = await bcrypt.compare(password, user?.passwordHash ?? DUMMY_HASH);
 
       if (!user || !passwordMatches || user.estado !== "ACTIVO") {
@@ -27,18 +26,13 @@ export function createAuthController(userModel: Model<IUser>, config: AuthConfig
         return;
       }
 
-      user.ultimoAcceso = new Date();
-      await user.save();
+      await users.touchLastAccess(user.id, new Date());
 
-      const token = signToken(
-        { userId: String(user._id), role: user.role },
-        config.secret,
-        config.expiresIn,
-      );
+      const token = signToken({ userId: user.id, role: user.role }, config.secret, config.expiresIn);
 
       res.json({
         token,
-        user: { id: user._id, nombre: user.nombre, apellido: user.apellido, role: user.role },
+        user: { id: user.id, nombre: user.nombre, apellido: user.apellido, role: user.role },
       });
     },
   };

@@ -1,5 +1,5 @@
-import { ESTADOS_ASIGNACION } from "../models/interfaces/IAsignacion.interface.js";
-import { isObjectIdString } from "../utils/object-id.js";
+import { ESTADOS_ASIGNACION } from "../domain/enums.js";
+import { isUuid } from "../utils/uuid.js";
 import { type ValidationError, type ValidationResult } from "./validation.js";
 
 const ID_FIELDS = ["relevamiento", "encuestador", "comercio"] as const;
@@ -9,7 +9,7 @@ function result(errors: ValidationError[]): ValidationResult {
 }
 
 function checkId(field: string, value: unknown, errors: ValidationError[]): void {
-  if (!isObjectIdString(value)) {
+  if (!isUuid(value)) {
     errors.push({ field, message: `${field} must be a valid id` });
   }
 }

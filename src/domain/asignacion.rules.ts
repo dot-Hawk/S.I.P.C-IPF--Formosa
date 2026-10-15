@@ -1,4 +1,4 @@
-import { type EstadoAsignacion } from "../models/interfaces/IAsignacion.interface.js";
+import { type EstadoAsignacion } from "./enums.js";
 
 const TRANSITIONS: Record<EstadoAsignacion, EstadoAsignacion[]> = {
   PENDIENTE: ["EN_CURSO"],

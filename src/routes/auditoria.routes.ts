@@ -3,9 +3,10 @@ import { getAuthConfig } from "../config/auth.js";
 import { createAuditoriaController } from "../controllers/auditoria.controller.js";
 import { createAuthenticate } from "../middlewares/authenticate.middleware.js";
 import { authorize } from "../middlewares/authorize.middleware.js";
-import { PrecioAuditoria } from "../models/precio-auditoria.model.js";
+import { getDb } from "../db/index.js";
+import { createAuditoriaRepository } from "../repositories/auditoria.repository.js";
 
-const controller = createAuditoriaController(PrecioAuditoria);
+const controller = createAuditoriaController(createAuditoriaRepository(getDb()));
 const authenticate = createAuthenticate(getAuthConfig().secret);
 
 const auditoriaRouter = Router();

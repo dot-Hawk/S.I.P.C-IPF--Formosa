@@ -1,31 +1,30 @@
 import bcrypt from "bcryptjs";
 import { type Request, type Response } from "express";
-import { type Model } from "mongoose";
-import { type IUser } from "../models/interfaces/IUser.interface.js";
-import { isDuplicateKeyError, isMongooseValidationError } from "../utils/mongo-errors.js";
+import { type UserRepository } from "../repositories/user.repository.js";
+import { isUniqueViolation } from "../utils/db-errors.js";
 
 const BCRYPT_ROUNDS = 10;
 
-export function createUserController(userModel: Model<IUser>) {
+export function createUserController(users: UserRepository) {
   return {
     async create(req: Request, res: Response): Promise<void> {
       const { nombre, apellido, dni, legajo, email, password, role } = req.body;
 
       try {
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-        const user = await userModel.create({
+        const user = await users.create({
           nombre,
           apellido,
           dni,
           legajo,
-          email,
+          email: String(email).trim().toLowerCase(),
           passwordHash,
           role,
           estado: "ACTIVO",
         });
 
         res.status(201).json({
-          id: user._id,
+          id: user.id,
           nombre: user.nombre,
           apellido: user.apellido,
           dni: user.dni,
@@ -35,12 +34,8 @@ export function createUserController(userModel: Model<IUser>) {
           estado: user.estado,
         });
       } catch (error) {
-        if (isDuplicateKeyError(error)) {
+        if (isUniqueViolation(error)) {
           res.status(409).json({ message: "A user with this dni, legajo or email already exists" });
-          return;
-        }
-        if (isMongooseValidationError(error)) {
-          res.status(400).json({ message: error.message });
           return;
         }
         throw error;

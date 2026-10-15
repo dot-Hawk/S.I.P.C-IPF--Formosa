@@ -1,80 +1,63 @@
 import { type Request, type Response } from "express";
-import { isValidObjectId, type Model } from "mongoose";
-import { type IComercio } from "../models/interfaces/IComercio.interface.js";
-import { isMongooseValidationError } from "../utils/mongo-errors.js";
+import {
+  type ComercioChanges,
+  type ComercioFilter,
+  type ComercioRepository,
+} from "../repositories/comercio.repository.js";
+import { isUuid } from "../utils/uuid.js";
 import { validateComercioFilters } from "../validators/comercio.validator.js";
 
 const UPDATABLE_FIELDS = ["nombre", "direccion", "zona", "tipo"] as const;
 const TEXT_FIELDS = new Set(["nombre", "direccion", "zona"]);
 const FILTER_FIELDS = ["zona", "tipo", "estado"] as const;
 
-function pickUpdates(body: Record<string, unknown>): Record<string, unknown> {
+function trimIfText(field: string, value: unknown): unknown {
+  return TEXT_FIELDS.has(field) && typeof value === "string" ? value.trim() : value;
+}
+
+// Only whitelisted fields, so estado and anything unknown can never be set through a general update.
+function pickUpdates(body: Record<string, unknown>): ComercioChanges {
   const updates: Record<string, unknown> = {};
 
   for (const field of UPDATABLE_FIELDS) {
     const value = body[field];
-    if (value === undefined) continue;
-    updates[field] = TEXT_FIELDS.has(field) && typeof value === "string" ? value.trim() : value;
+    if (value !== undefined) updates[field] = trimIfText(field, value);
   }
 
-  return updates;
+  return updates as ComercioChanges;
 }
 
-export function createComercioController(model: Model<IComercio>) {
-  async function applyUpdate(
-    req: Request,
-    res: Response,
-    updates: Record<string, unknown>,
-  ): Promise<void> {
+export function createComercioController(comercios: ComercioRepository) {
+  async function applyUpdate(req: Request, res: Response, changes: ComercioChanges): Promise<void> {
     const id = req.params["id"];
 
-    if (!id || !isValidObjectId(id)) {
+    if (!isUuid(id)) {
       res.status(400).json({ message: "Invalid comercio id" });
       return;
     }
 
-    try {
-      const comercio = await model.findByIdAndUpdate(
-        id,
-        { $set: updates },
-        { new: true, runValidators: true },
-      );
-
-      if (!comercio) {
-        res.status(404).json({ message: "Comercio not found" });
-        return;
-      }
-
-      res.json(comercio);
-    } catch (error) {
-      if (isMongooseValidationError(error)) {
-        res.status(400).json({ message: error.message });
-        return;
-      }
-      throw error;
+    const comercio = await comercios.update(id, changes);
+    if (!comercio) {
+      res.status(404).json({ message: "Comercio not found" });
+      return;
     }
+
+    res.json(comercio);
   }
 
   return {
     async create(req: Request, res: Response): Promise<void> {
       const { nombre, direccion, zona, tipo } = req.body;
 
-      try {
-        const comercio = await model.create({
-          nombre: String(nombre).trim(),
-          direccion: String(direccion).trim(),
-          zona: String(zona).trim(),
-          tipo,
-          estado: "ACTIVO",
-        });
-        res.status(201).json(comercio);
-      } catch (error) {
-        if (isMongooseValidationError(error)) {
-          res.status(400).json({ message: error.message });
-          return;
-        }
-        throw error;
-      }
+      const comercio = await comercios.create({
+        nombre: String(nombre).trim(),
+        direccion: String(direccion).trim(),
+        zona: String(zona).trim(),
+        tipo,
+        estado: "ACTIVO",
+      });
+
+      res.status(201).json(comercio);
     },
 
     async list(req: Request, res: Response): Promise<void> {
@@ -90,19 +73,18 @@ export function createComercioController(model: Model<IComercio>) {
         if (typeof value === "string") filter[field] = value.trim();
       }
 
-      const comercios = await model.find(filter).sort({ nombre: 1 });
-      res.json(comercios);
+      res.json(await comercios.list(filter as ComercioFilter));
     },
 
     async getById(req: Request, res: Response): Promise<void> {
       const id = req.params["id"];
 
-      if (!id || !isValidObjectId(id)) {
+      if (!isUuid(id)) {
         res.status(400).json({ message: "Invalid comercio id" });
         return;
       }
 
-      const comercio = await model.findById(id);
+      const comercio = await comercios.findById(id);
       if (!comercio) {
         res.status(404).json({ message: "Comercio not found" });
         return;

@@ -1,8 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
-import { type Model } from "mongoose";
-import { type IUser } from "../models/interfaces/IUser.interface.js";
+import { type UserRepository } from "../repositories/user.repository.js";
 import { seedCoordinador } from "./seed-coordinador.service.js";
 
 const INPUT = {
@@ -17,13 +16,13 @@ const INPUT = {
 function fakeModel(coordinadorExists: boolean) {
   const created: Record<string, unknown>[] = [];
   const model = {
-    exists: async () => (coordinadorExists ? { _id: "x" } : null),
+    hasRole: async () => coordinadorExists,
     create: async (data: Record<string, unknown>) => {
       created.push(data);
       return data;
     },
   };
-  return { model: model as unknown as Model<IUser>, created };
+  return { model: model as unknown as UserRepository, created };
 }
 
 describe("seedCoordinador", () => {

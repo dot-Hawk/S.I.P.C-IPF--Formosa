@@ -1,11 +1,13 @@
 import { type Request, type Response } from "express";
-import { isValidObjectId, type Model } from "mongoose";
+import { type CanastaRepository } from "../repositories/canasta.repository.js";
 import {
-  NIVEL_VARIEDAD,
-  type ICanastaNodo,
-} from "../models/interfaces/ICanastaNodo.interface.js";
-import { type IProducto } from "../models/interfaces/IProducto.interface.js";
-import { isDuplicateKeyError, isMongooseValidationError } from "../utils/mongo-errors.js";
+  type ProductoChanges,
+  type ProductoFilter,
+  type ProductoInput,
+  type ProductoRepository,
+} from "../repositories/producto.repository.js";
+import { isUniqueViolation } from "../utils/db-errors.js";
+import { isUuid } from "../utils/uuid.js";
 import { validateProductoFilters } from "../validators/producto.validator.js";
 
 const UPDATABLE_FIELDS = [
@@ -19,14 +21,14 @@ const UPDATABLE_FIELDS = [
 const TEXT_FIELDS = new Set(["nombre", "categoria", "marca", "codigoVariedad"]);
 const FILTER_FIELDS = ["categoria", "unidad", "estado", "codigoVariedad"] as const;
 const INVALID_VARIEDAD_MESSAGE = "codigoVariedad must be an existing active variedad of the canasta";
+const DUPLICATE_MESSAGE =
+  "A producto with the same nombre, marca, unidad and cantidadReferencia already exists";
 
 function trimIfText(field: string, value: unknown): unknown {
   return TEXT_FIELDS.has(field) && typeof value === "string" ? value.trim() : value;
 }
 
-const DUPLICATE_MESSAGE =
-  "A producto with the same nombre, marca, unidad and cantidadReferencia already exists";
-
+// Only whitelisted fields, so estado and anything unknown can never be set through a general update.
 function pickUpdates(body: Record<string, unknown>): Record<string, unknown> {
   const updates: Record<string, unknown> = {};
 
@@ -38,22 +40,15 @@ function pickUpdates(body: Record<string, unknown>): Record<string, unknown> {
   return updates;
 }
 
-export function createProductoController(model: Model<IProducto>, canasta: Model<ICanastaNodo>) {
+export function createProductoController(productos: ProductoRepository, canasta: CanastaRepository) {
   async function isActiveVariedad(codigo: unknown): Promise<boolean> {
-    if (typeof codigo !== "string") return false;
-
-    const found = await canasta.exists({ codigo, nivel: NIVEL_VARIEDAD, estado: "ACTIVO" });
-    return found !== null;
+    return typeof codigo === "string" && (await canasta.isActiveVariedad(codigo));
   }
 
-  async function applyUpdate(
-    req: Request,
-    res: Response,
-    updates: Record<string, unknown>,
-  ): Promise<void> {
+  async function applyUpdate(req: Request, res: Response, updates: Record<string, unknown>): Promise<void> {
     const id = req.params["id"];
 
-    if (!id || !isValidObjectId(id)) {
+    if (!isUuid(id)) {
       res.status(400).json({ message: "Invalid producto id" });
       return;
     }
@@ -64,12 +59,7 @@ export function createProductoController(model: Model<IProducto>, canasta: Model
     }
 
     try {
-      const producto = await model.findByIdAndUpdate(
-        id,
-        { $set: updates },
-        { new: true, runValidators: true },
-      );
-
+      const producto = await productos.update(id, updates as ProductoChanges);
       if (!producto) {
         res.status(404).json({ message: "Producto not found" });
         return;
@@ -77,12 +67,8 @@ export function createProductoController(model: Model<IProducto>, canasta: Model
 
       res.json(producto);
     } catch (error) {
-      if (isDuplicateKeyError(error)) {
+      if (isUniqueViolation(error)) {
         res.status(409).json({ message: DUPLICATE_MESSAGE });
-        return;
-      }
-      if (isMongooseValidationError(error)) {
-        res.status(400).json({ message: error.message });
         return;
       }
       throw error;
@@ -102,15 +88,11 @@ export function createProductoController(model: Model<IProducto>, canasta: Model
       }
 
       try {
-        const producto = await model.create(data);
+        const producto = await productos.create(data as ProductoInput);
         res.status(201).json(producto);
       } catch (error) {
-        if (isDuplicateKeyError(error)) {
+        if (isUniqueViolation(error)) {
           res.status(409).json({ message: DUPLICATE_MESSAGE });
-          return;
-        }
-        if (isMongooseValidationError(error)) {
-          res.status(400).json({ message: error.message });
           return;
         }
         throw error;
@@ -130,19 +112,18 @@ export function createProductoController(model: Model<IProducto>, canasta: Model
         if (typeof value === "string") filter[field] = value.trim();
       }
 
-      const productos = await model.find(filter).sort({ nombre: 1 });
-      res.json(productos);
+      res.json(await productos.list(filter as ProductoFilter));
     },
 
     async getById(req: Request, res: Response): Promise<void> {
       const id = req.params["id"];
 
-      if (!id || !isValidObjectId(id)) {
+      if (!isUuid(id)) {
         res.status(400).json({ message: "Invalid producto id" });
         return;
       }
 
-      const producto = await model.findById(id);
+      const producto = await productos.findById(id);
       if (!producto) {
         res.status(404).json({ message: "Producto not found" });
         return;

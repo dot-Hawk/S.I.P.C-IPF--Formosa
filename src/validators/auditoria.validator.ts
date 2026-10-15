@@ -1,5 +1,5 @@
-import { ACCIONES_AUDITORIA } from "../models/interfaces/IPrecioAuditoria.interface.js";
-import { isObjectIdString } from "../utils/object-id.js";
+import { ACCIONES_AUDITORIA } from "../domain/enums.js";
+import { isUuid } from "../utils/uuid.js";
 import { MAX_PAGE_SIZE } from "./precio.validator.js";
 import { type ValidationError, type ValidationResult } from "./validation.js";
 
@@ -10,7 +10,7 @@ export function validateAuditoriaFilters(query: Record<string, unknown>): Valida
   const errors: ValidationError[] = [];
 
   for (const field of ID_FILTERS) {
-    if (query[field] !== undefined && !isObjectIdString(query[field])) {
+    if (query[field] !== undefined && !isUuid(query[field])) {
       errors.push({ field, message: `${field} must be a valid id` });
     }
   }

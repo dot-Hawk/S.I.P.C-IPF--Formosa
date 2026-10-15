@@ -1,67 +1,41 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { type Request, type Response } from "express";
-import { type Model } from "mongoose";
-import { type IProducto } from "../models/interfaces/IProducto.interface.js";
-import { type ICanastaNodo } from "../models/interfaces/ICanastaNodo.interface.js";
+import { type CanastaRepository } from "../repositories/canasta.repository.js";
+import { type ProductoRepository } from "../repositories/producto.repository.js";
+import { invoke } from "../testing/http.js";
 import { createProductoController } from "./producto.controller.js";
 
-interface FakeResponse {
-  statusCode: number;
-  body: unknown;
-  status(code: number): FakeResponse;
-  json(payload: unknown): FakeResponse;
+const VALID_ID = "00000000-0000-4000-8000-000000000011";
+
+const ACTIVE_VARIEDAD = { isActiveVariedad: async () => true };
+const MISSING_VARIEDAD = { isActiveVariedad: async () => false };
+
+const duplicate = () => Object.assign(new Error("Failed query"), { cause: { code: "23505" } });
+
+function controller(repo: object, canasta: object = ACTIVE_VARIEDAD) {
+  return createProductoController(repo as ProductoRepository, canasta as CanastaRepository);
 }
 
-function fakeResponse(): FakeResponse {
-  const res: FakeResponse = {
-    statusCode: 200,
-    body: undefined,
-    status(code) {
-      res.statusCode = code;
-      return res;
-    },
-    json(payload) {
-      res.body = payload;
-      return res;
-    },
-  };
-  return res;
-}
-
-const VALID_ID = "507f1f77bcf86cd799439011";
-
-const EXISTING_VARIEDAD = { exists: async () => ({ _id: "v" }) };
-const MISSING_VARIEDAD = { exists: async () => null };
-
-function controller(model: object, canasta: object = EXISTING_VARIEDAD) {
-  return createProductoController(
-    model as unknown as Model<IProducto>,
-    canasta as unknown as Model<ICanastaNodo>,
-  );
-}
-
-async function call(
-  handler: (req: Request, res: Response) => Promise<void>,
-  req: object,
-): Promise<FakeResponse> {
-  const res = fakeResponse();
-  await handler(req as Request, res as unknown as Response);
-  return res;
-}
+const VALID_BODY = {
+  nombre: "Arroz",
+  categoria: "Almacen",
+  unidad: "KG",
+  cantidadReferencia: 1,
+  codigoVariedad: "1111101",
+};
 
 describe("producto controller", () => {
   describe("create", () => {
     it("trims text, forces ACTIVO and drops unknown fields", async () => {
       let received: Record<string, unknown> | undefined;
-      const model = {
+      const repo = {
         create: async (data: Record<string, unknown>) => {
           received = data;
           return data;
         },
       };
 
-      const res = await call(controller(model).create, {
+      const res = await invoke(controller(repo).create, {
         body: {
           nombre: " Arroz ",
           categoria: "Almacen ",
@@ -70,7 +44,7 @@ describe("producto controller", () => {
           marca: " Gallo",
           codigoVariedad: " 1111101 ",
           estado: "INACTIVO",
-          _id: "hack",
+          id: "hack",
         },
       });
 
@@ -86,178 +60,151 @@ describe("producto controller", () => {
       });
     });
 
-    it("checks the variedad is an active nivel 6 node of the canasta", async () => {
-      let filter: unknown;
-      const canasta = {
-        exists: async (f: unknown) => {
-          filter = f;
-          return { _id: "v" };
-        },
-      };
-      const model = { create: async (data: object) => data };
-
-      await call(controller(model, canasta).create, {
-        body: { nombre: "a", categoria: "b", unidad: "KG", cantidadReferencia: 1, codigoVariedad: "1111101" },
-      });
-
-      assert.deepEqual(filter, { codigo: "1111101", nivel: 6, estado: "ACTIVO" });
-    });
-
-    it("answers 400 when the variedad does not exist or is inactive", async () => {
-      let created = false;
-      const model = {
-        create: async () => {
-          created = true;
-        },
-      };
-
-      const res = await call(controller(model, MISSING_VARIEDAD).create, {
-        body: { nombre: "a", categoria: "b", unidad: "KG", cantidadReferencia: 1, codigoVariedad: "9999999" },
-      });
-
-      assert.equal(res.statusCode, 400);
-      assert.equal(created, false);
-    });
-
     it("omits marca when it is not provided", async () => {
       let received: Record<string, unknown> | undefined;
-      const model = {
+      const repo = {
         create: async (data: Record<string, unknown>) => {
           received = data;
           return data;
         },
       };
 
-      await call(controller(model).create, {
-        body: { nombre: "Arroz", categoria: "Almacen", unidad: "KG", cantidadReferencia: 1 },
-      });
+      await invoke(controller(repo).create, { body: VALID_BODY });
 
       assert.equal(received !== undefined && "marca" in received, false);
     });
 
-    it("answers 409 when an equal producto already exists", async () => {
-      const model = {
-        create: async () => {
-          throw Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
+    it("checks the variedad against the canasta", async () => {
+      let checked: unknown;
+      const canasta = {
+        isActiveVariedad: async (codigo: string) => {
+          checked = codigo;
+          return true;
         },
       };
 
-      const res = await call(controller(model).create, {
-        body: { nombre: "Leche", categoria: "Lacteos", unidad: "LT", cantidadReferencia: 1, codigoVariedad: "1111101" },
+      await invoke(controller({ create: async (d: object) => d }, canasta).create, {
+        body: { ...VALID_BODY, codigoVariedad: " 1111101 " },
       });
 
-      assert.equal(res.statusCode, 409);
-      assert.deepEqual(res.body, { message: "A producto with the same nombre, marca, unidad and cantidadReferencia already exists" });
+      assert.equal(checked, "1111101");
     });
 
-    it("answers 400 on a mongoose validation error", async () => {
-      const model = {
+    it("answers 400 when the variedad does not exist or is inactive", async () => {
+      let created = false;
+      const repo = {
         create: async () => {
-          throw Object.assign(new Error("invalid"), { name: "ValidationError" });
+          created = true;
         },
       };
 
-      const res = await call(controller(model).create, { body: {} });
+      const res = await invoke(controller(repo, MISSING_VARIEDAD).create, {
+        body: { ...VALID_BODY, codigoVariedad: "9999999" },
+      });
 
       assert.equal(res.statusCode, 400);
+      assert.equal(created, false);
+    });
+
+    it("answers 409 when an equal producto already exists", async () => {
+      const repo = {
+        create: async () => {
+          throw duplicate();
+        },
+      };
+
+      const res = await invoke(controller(repo).create, { body: VALID_BODY });
+
+      assert.equal(res.statusCode, 409);
+      assert.deepEqual(res.body, {
+        message: "A producto with the same nombre, marca, unidad and cantidadReferencia already exists",
+      });
+    });
+
+    it("rethrows unexpected errors", async () => {
+      const repo = {
+        create: async () => {
+          throw new Error("connection lost");
+        },
+      };
+
+      await assert.rejects(invoke(controller(repo).create, { body: VALID_BODY }), /connection lost/);
     });
   });
 
   describe("list", () => {
     it("answers 400 on invalid filters", async () => {
-      const res = await call(controller({}).list, { query: { unidad: "TON" } });
+      const res = await invoke(controller({}).list, { query: { unidad: "TON" } });
 
       assert.equal(res.statusCode, 400);
     });
 
-    it("applies only the provided filters and sorts by nombre", async () => {
+    it("passes only the provided filters", async () => {
       let filter: unknown;
-      let sort: unknown;
-      const model = {
-        find: (f: unknown) => {
+      const repo = {
+        list: async (f: unknown) => {
           filter = f;
-          return {
-            sort: async (s: unknown) => {
-              sort = s;
-              return [];
-            },
-          };
+          return [];
         },
       };
 
-      await call(controller(model).list, { query: { categoria: "Almacen", estado: "ACTIVO" } });
+      await invoke(controller(repo).list, {
+        query: { categoria: " Almacen ", unidad: "KG", codigoVariedad: "1111101", junk: "x" },
+      });
 
-      assert.deepEqual(filter, { categoria: "Almacen", estado: "ACTIVO" });
-      assert.deepEqual(sort, { nombre: 1 });
+      assert.deepEqual(filter, { categoria: "Almacen", unidad: "KG", codigoVariedad: "1111101" });
     });
   });
 
   describe("getById", () => {
     it("answers 400, 404 and 200 appropriately", async () => {
-      assert.equal((await call(controller({}).getById, { params: { id: "x" } })).statusCode, 400);
+      const found = controller({ findById: async () => ({ nombre: "x" }) });
+      const missing = controller({ findById: async () => null });
 
-      const missing = { findById: async () => null };
-      assert.equal((await call(controller(missing).getById, { params: { id: VALID_ID } })).statusCode, 404);
-
-      const found = { findById: async () => ({ nombre: "Arroz" }) };
-      assert.equal((await call(controller(found).getById, { params: { id: VALID_ID } })).statusCode, 200);
+      assert.equal((await invoke(found.getById, { params: { id: "x" } })).statusCode, 400);
+      assert.equal((await invoke(missing.getById, { params: { id: VALID_ID } })).statusCode, 404);
+      assert.equal((await invoke(found.getById, { params: { id: VALID_ID } })).statusCode, 200);
     });
   });
 
   describe("update", () => {
     it("only sets whitelisted fields, ignoring estado and unknown fields", async () => {
-      let update: unknown;
-      let options: unknown;
-      const model = {
-        findByIdAndUpdate: async (_id: unknown, u: unknown, o: unknown) => {
-          update = u;
-          options = o;
+      let changes: unknown;
+      const repo = {
+        update: async (_id: string, c: unknown) => {
+          changes = c;
           return { nombre: "Nuevo" };
         },
       };
 
-      const res = await call(controller(model).update, {
+      const res = await invoke(controller(repo).update, {
         params: { id: VALID_ID },
-        body: { nombre: " Nuevo ", cantidadReferencia: 500, estado: "INACTIVO", _id: "hack" },
+        body: { nombre: " Nuevo ", cantidadReferencia: 500, estado: "INACTIVO", id: "hack" },
       });
 
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(update, { $set: { nombre: "Nuevo", cantidadReferencia: 500 } });
-      assert.deepEqual(options, { new: true, runValidators: true });
-    });
-
-    it("answers 404 when the producto does not exist", async () => {
-      const model = { findByIdAndUpdate: async () => null };
-
-      const res = await call(controller(model).update, { params: { id: VALID_ID }, body: { nombre: "x" } });
-
-      assert.equal(res.statusCode, 404);
+      assert.deepEqual(changes, { nombre: "Nuevo", cantidadReferencia: 500 });
     });
 
     it("validates the variedad only when codigoVariedad is being changed", async () => {
       let lookups = 0;
       const canasta = {
-        exists: async () => {
+        isActiveVariedad: async () => {
           lookups++;
-          return { _id: "v" };
+          return true;
         },
       };
-      const model = { findByIdAndUpdate: async () => ({}) };
+      const c = controller({ update: async () => ({}) }, canasta);
 
-      await call(controller(model, canasta).update, { params: { id: VALID_ID }, body: { nombre: "x" } });
+      await invoke(c.update, { params: { id: VALID_ID }, body: { nombre: "x" } });
       assert.equal(lookups, 0);
 
-      await call(controller(model, canasta).update, {
-        params: { id: VALID_ID },
-        body: { codigoVariedad: "1111102" },
-      });
+      await invoke(c.update, { params: { id: VALID_ID }, body: { codigoVariedad: "1111102" } });
       assert.equal(lookups, 1);
     });
 
     it("answers 400 when the new variedad does not exist", async () => {
-      const model = { findByIdAndUpdate: async () => ({}) };
-
-      const res = await call(controller(model, MISSING_VARIEDAD).update, {
+      const res = await invoke(controller({ update: async () => ({}) }, MISSING_VARIEDAD).update, {
         params: { id: VALID_ID },
         body: { codigoVariedad: "9999999" },
       });
@@ -266,41 +213,42 @@ describe("producto controller", () => {
     });
 
     it("answers 409 when the change collides with another producto", async () => {
-      const model = {
-        findByIdAndUpdate: async () => {
-          throw Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
+      const repo = {
+        update: async () => {
+          throw duplicate();
         },
       };
 
-      const res = await call(controller(model).update, { params: { id: VALID_ID }, body: { nombre: "x" } });
+      const res = await invoke(controller(repo).update, { params: { id: VALID_ID }, body: { nombre: "x" } });
 
       assert.equal(res.statusCode, 409);
     });
 
-    it("answers 400 on an invalid id", async () => {
-      const res = await call(controller({}).update, { params: { id: "x" }, body: { nombre: "x" } });
+    it("answers 404 when the producto does not exist and 400 on an invalid id", async () => {
+      const c = controller({ update: async () => null });
 
-      assert.equal(res.statusCode, 400);
+      assert.equal((await invoke(c.update, { params: { id: VALID_ID }, body: { nombre: "x" } })).statusCode, 404);
+      assert.equal((await invoke(c.update, { params: { id: "x" }, body: { nombre: "x" } })).statusCode, 400);
     });
   });
 
   describe("setEstado", () => {
     it("sets only the estado", async () => {
-      let update: unknown;
-      const model = {
-        findByIdAndUpdate: async (_id: unknown, u: unknown) => {
-          update = u;
+      let changes: unknown;
+      const repo = {
+        update: async (_id: string, c: unknown) => {
+          changes = c;
           return { estado: "INACTIVO" };
         },
       };
 
-      const res = await call(controller(model).setEstado, {
+      const res = await invoke(controller(repo).setEstado, {
         params: { id: VALID_ID },
-        body: { estado: "INACTIVO", nombre: "ignored" },
+        body: { estado: "INACTIVO", nombre: "hack" },
       });
 
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(update, { $set: { estado: "INACTIVO" } });
+      assert.deepEqual(changes, { estado: "INACTIVO" });
     });
   });
 });

@@ -2,7 +2,7 @@ import {
   CATEGORIAS_CANASTA,
   NIVEL_VARIEDAD,
   type CategoriaCanasta,
-} from "../models/interfaces/ICanastaNodo.interface.js";
+} from "./enums.js";
 
 export interface RawNodo {
   codigo: string;

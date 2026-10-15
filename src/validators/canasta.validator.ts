@@ -1,7 +1,7 @@
 import {
   CATEGORIAS_CANASTA,
   ESTADOS_CANASTA,
-} from "../models/interfaces/ICanastaNodo.interface.js";
+} from "../domain/enums.js";
 import { type ValidationError, type ValidationResult } from "./validation.js";
 
 const VARIEDAD_CODIGO = /^\d{7}$/;

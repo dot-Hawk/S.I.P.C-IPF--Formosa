@@ -4,14 +4,15 @@ import { createComercioController } from "../controllers/comercio.controller.js"
 import { createAuthenticate } from "../middlewares/authenticate.middleware.js";
 import { authorize } from "../middlewares/authorize.middleware.js";
 import { validateBody } from "../middlewares/validate-body.middleware.js";
-import { Comercio } from "../models/comercio.model.js";
+import { getDb } from "../db/index.js";
+import { createComercioRepository } from "../repositories/comercio.repository.js";
 import {
   validateComercioCreate,
   validateComercioEstado,
   validateComercioUpdate,
 } from "../validators/comercio.validator.js";
 
-const controller = createComercioController(Comercio);
+const controller = createComercioController(createComercioRepository(getDb()));
 const authenticate = createAuthenticate(getAuthConfig().secret);
 
 const comercioRouter = Router();

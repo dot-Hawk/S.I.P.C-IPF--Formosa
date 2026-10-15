@@ -1,7 +1,7 @@
 import {
   ESTADOS_PRODUCTO,
   UNIDADES_PRODUCTO,
-} from "../models/interfaces/IProducto.interface.js";
+} from "../domain/enums.js";
 import { type ValidationError, type ValidationResult } from "./validation.js";
 
 const REQUIRED_FIELDS = ["nombre", "categoria", "unidad", "cantidadReferencia"] as const;
