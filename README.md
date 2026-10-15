@@ -31,6 +31,7 @@ See `.env.example` for the full list.
 | `JWT_EXPIRES_IN` | no | Token lifetime. Defaults to `8h`. |
 | `TRUST_PROXY` | no | Number of proxy hops to trust. Set it when running behind a reverse proxy so rate limiting sees the real client IP. |
 | `SEED_NOMBRE`, `SEED_APELLIDO`, `SEED_DNI`, `SEED_LEGAJO`, `SEED_EMAIL`, `SEED_PASSWORD` | seed only | Data for the first coordinator user. |
+| `CORS_ORIGINS` | for a browser frontend | Comma separated origins allowed to call the API (e.g. `http://localhost:5173`). Empty means no cross-origin access. |
 | `UPLOADS_DIR` | no | Directory where receipt attachments are stored. Defaults to `./uploads` (git-ignored). Back it up together with the database. |
 | `ENGINE_URL` | for calculations | Base URL of the calculation engine (`engine/`). The API boots without it; `POST /api/calculos` answers `502` until it is set. |
 | `ENGINE_API_KEY` | for calculations | Key sent to the engine in `X-API-Key`. Must be the engine's own `ENGINE_API_KEY`. |
@@ -162,7 +163,6 @@ test/integration/   End-to-end flow against PostgreSQL
 ## Known limitations
 
 - Rate limiting is per process; use a shared store (e.g. Redis) before running multiple instances.
-- No `helmet` or CORS configuration yet (add when the frontend exists).
 - Quality changes (`Camb.Calidad`) are not modelled: the original scripts took them from the INDEC export and this system has no equivalent yet. See `engine/README.md`.
 - The relatives are per variedad. Aggregation to products, classes and groups needs the formula confirmed with the statisticians.
 - Attachments are stored on the server's local disk: with several backend instances they need a shared volume or an object-store implementation of `AttachmentStorage`.

@@ -1,4 +1,5 @@
 import express, {type Application} from "express";
+import { createHttpSecurity, parseCorsOrigins } from "./middlewares/http-security.middleware.js";
 import { errorHandler, notFoundHandler } from "./middlewares/error-handler.middleware.js";
 import asignacionRouter from "./routes/asignacion.routes.js";
 import auditoriaRouter from "./routes/auditoria.routes.js";
@@ -19,6 +20,8 @@ const trustProxyHops = Number(process.env["TRUST_PROXY"]);
 if (Number.isInteger(trustProxyHops) && trustProxyHops > 0) {
   app.set("trust proxy", trustProxyHops);
 }
+
+app.use(...createHttpSecurity(parseCorsOrigins(process.env["CORS_ORIGINS"])))
 
 app.use(express.json())
 
