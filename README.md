@@ -31,7 +31,11 @@ See `.env.example` for the full list.
 | `JWT_EXPIRES_IN` | no | Token lifetime. Defaults to `8h`. |
 | `TRUST_PROXY` | no | Number of proxy hops to trust. Set it when running behind a reverse proxy so rate limiting sees the real client IP. |
 | `SEED_NOMBRE`, `SEED_APELLIDO`, `SEED_DNI`, `SEED_LEGAJO`, `SEED_EMAIL`, `SEED_PASSWORD` | seed only | Data for the first coordinator user. |
+| `ENGINE_URL` | for calculations | Base URL of the calculation engine (`engine/`). The API boots without it; `POST /api/calculos` answers `502` until it is set. |
+| `ENGINE_API_KEY` | for calculations | Key sent to the engine in `X-API-Key`. Must be the engine's own `ENGINE_API_KEY`. |
+| `ENGINE_TIMEOUT_MS` | no | How long to wait for the engine. Defaults to 120000. |
 | `DATABASE_TEST_URL` | integration tests only | Throwaway database for `test:integration`. Its schema is dropped. |
+| `ENGINE_TEST_URL`, `ENGINE_TEST_API_KEY` | calculation integration test | A running engine for `test/integration/calculo-flow.test.ts`; skipped without them. |
 
 ## Scripts
 
@@ -105,6 +109,7 @@ All routes are under `/api`. Errors are JSON and never include stack traces. Res
 | `/api/asignaciones` | Surveyor assignments and state transitions. |
 | `/api/precios` | Price capture and queries (`oferta=true\|false` filter). |
 | `/api/auditoria/precios` | Audit trail of prices (not available to `ENCUESTADOR`). |
+| `/api/calculos` | Run the calculation engine over closed relevamientos; read runs, relatives and imputations. |
 
 ### Roles
 
@@ -121,6 +126,7 @@ All routes are under `/api`. Errors are JSON and never include stack traces. Res
 - **Comercio / Producto:** no `DELETE`; deactivate through `PATCH /:id/estado`. A producto is unique by `nombre` + `marca` + `unidad` + `cantidadReferencia` (case-insensitive; a missing `marca` counts as one value), otherwise `409`.
 - **Asignación:** `PENDIENTE` → `EN_CURSO` → `COMPLETADA` only; reassignment only while `PENDIENTE`; requires an open relevamiento and an active commerce and surveyor.
 - **Precio:** `valor > 0`, date not in the future nor before the relevamiento start; edit/delete only by the owner while the relevamiento is open and the assignment is `EN_CURSO`. `oferta` marks a promotional price: it is stored as registered and only used to filter. A `SUPERVISOR` can correct (`PATCH`, not delete) any price, even after the assignment is `COMPLETADA`, but only while the relevamiento is open.
+- **Calculation:** `POST /api/calculos` (`ANALISTA`, `COORDINADOR`) takes `mesBase` and `mesObjetivo` and recalculates the whole series between them. Every month of the range must have relevamientos and all of them must be `CERRADO` (`409` otherwise), so a run can be reproduced from its inputs. Prices of one variedad in one commerce and month are averaged; `excluirOfertas` leaves promotional prices out. Each run is stored with its parameters, a hash of the input, the engine version, the relatives and the imputations; it is never edited. Reads (`GET /api/calculos`, `/:id`, `/:id/relativos`, `/:id/imputaciones`) are open to `SUPERVISOR`, `ANALISTA`, `COORDINADOR` and `DIRECCION`.
 - **Login rate limit:** only failed attempts count; 5 per IP+email and 30 per IP every 15 minutes, then `429` with `Retry-After`. Counters live in memory, so they reset on restart and are not shared between instances.
 
 ## Project layout
@@ -142,6 +148,7 @@ src/
   utils/            SQL error mapping, uuid checks
   scripts/          CLI scripts (seed, basket import)
 drizzle/            Versioned SQL migrations
+engine/             Calculation engine (Python, FastAPI): see engine/README.md
 test/integration/   End-to-end flow against PostgreSQL
 ```
 
@@ -149,4 +156,6 @@ test/integration/   End-to-end flow against PostgreSQL
 
 - Rate limiting is per process; use a shared store (e.g. Redis) before running multiple instances.
 - No `helmet` or CORS configuration yet (add when the frontend exists).
-- The price calculation engine (Python service) is not implemented yet.
+- Quality changes (`Camb.Calidad`) are not modelled: the original scripts took them from the INDEC export and this system has no equivalent yet. See `engine/README.md`.
+- The relatives are per variedad. Aggregation to products, classes and groups needs the formula confirmed with the statisticians.
+- The calculation runs synchronously inside the request (about 15 s for a year of real data).

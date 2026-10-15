@@ -3,6 +3,7 @@ import { errorHandler, notFoundHandler } from "./middlewares/error-handler.middl
 import asignacionRouter from "./routes/asignacion.routes.js";
 import auditoriaRouter from "./routes/auditoria.routes.js";
 import authRouter from "./routes/auth.routes.js";
+import calculoRouter from "./routes/calculo.routes.js";
 import canastaRouter from "./routes/canasta.routes.js";
 import comercioRouter from "./routes/comercio.routes.js";
 import precioRouter from "./routes/precio.routes.js";
@@ -30,6 +31,7 @@ app.use("/api/productos", productoRouter)
 app.use("/api/asignaciones", asignacionRouter)
 app.use("/api/precios", precioRouter)
 app.use("/api/auditoria", auditoriaRouter)
+app.use("/api/calculos", calculoRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

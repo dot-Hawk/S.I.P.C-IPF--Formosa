@@ -5,10 +5,12 @@ import {
   doublePrecision,
   foreignKey,
   index,
+  integer,
   jsonb,
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   smallint,
   text,
   timestamp,
@@ -20,6 +22,7 @@ import {
   ACCIONES_AUDITORIA,
   CATEGORIAS_CANASTA,
   ESTADOS_ASIGNACION,
+  ESTADOS_CALCULO,
   ESTADOS_CANASTA,
   ESTADOS_COMERCIO,
   ESTADOS_PRODUCTO,
@@ -43,6 +46,7 @@ export const estadoAsignacionEnum = pgEnum("estado_asignacion", ESTADOS_ASIGNACI
 export const categoriaCanastaEnum = pgEnum("categoria_canasta", CATEGORIAS_CANASTA);
 export const estadoCanastaEnum = pgEnum("estado_canasta", ESTADOS_CANASTA);
 export const accionAuditoriaEnum = pgEnum("accion_auditoria", ACCIONES_AUDITORIA);
+export const estadoCalculoEnum = pgEnum("estado_calculo", ESTADOS_CALCULO);
 
 const id = () => uuid("id").primaryKey().defaultRandom();
 
@@ -236,6 +240,88 @@ export const precioAuditoria = pgTable(
   ],
 );
 
+export interface ParametrosCalculo {
+  esperarMeses: number;
+  pesoSuper: number;
+  pesoTrad: number;
+  omitirGruposCompletos: boolean;
+}
+
+export interface ResumenCalculo {
+  observaciones: number;
+  variedades: number;
+  informantes: number;
+  imputaciones: number;
+  sinImputar: number;
+  // Prices no level could estimate (comercio ids), so a run that left gaps says where.
+  sinImputarDetalle?: { variedad: string; comercio: string; mes: string }[];
+}
+
+// One execution of the calculation engine. Immutable: a new run is created whenever the inputs or
+// the parameters change, so every published figure can be traced to its inputs.
+export const calculos = pgTable(
+  "calculos",
+  {
+    id: id(),
+    mesBase: text("mes_base").notNull(),
+    mesObjetivo: text("mes_objetivo").notNull(),
+    excluirOfertas: boolean("excluir_ofertas").notNull().default(false),
+    parametros: jsonb("parametros").$type<ParametrosCalculo>().notNull(),
+    motorVersion: text("motor_version"),
+    // Hash of everything sent to the engine, to tell whether two runs had the same inputs.
+    entradaHash: text("entrada_hash").notNull(),
+    estado: estadoCalculoEnum("estado").notNull(),
+    error: text("error"),
+    resumen: jsonb("resumen").$type<ResumenCalculo>(),
+    creadoPor: uuid("creado_por")
+      .notNull()
+      .references(() => users.id),
+    ...timestamps,
+  },
+  (t) => [index("calculos_created_idx").on(t.createdAt)],
+);
+
+export const calculoRelativos = pgTable(
+  "calculo_relativos",
+  {
+    calculo: uuid("calculo_id")
+      .notNull()
+      .references(() => calculos.id, { onDelete: "cascade" }),
+    variedad: text("variedad")
+      .notNull()
+      .references(() => canastaNodos.codigo),
+    mes: text("mes").notNull(),
+    // Null when no informant had a price in both months.
+    valor: doublePrecision("valor"),
+    nSuper: integer("n_super").notNull(),
+    nTrad: integer("n_trad").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.calculo, t.variedad, t.mes] }), index("calculo_relativos_mes_idx").on(t.mes)],
+);
+
+export const calculoImputaciones = pgTable(
+  "calculo_imputaciones",
+  {
+    id: id(),
+    calculo: uuid("calculo_id")
+      .notNull()
+      .references(() => calculos.id, { onDelete: "cascade" }),
+    variedad: text("variedad")
+      .notNull()
+      .references(() => canastaNodos.codigo),
+    comercio: uuid("comercio_id")
+      .notNull()
+      .references(() => comercios.id),
+    mes: text("mes").notNull(),
+    precio: doublePrecision("precio").notNull(),
+    // 0 = the variedad itself, 1..n = groups of its hierarchy, last = everything.
+    nivel: smallint("nivel").notNull(),
+    grupo: text("grupo").notNull(),
+    factor: doublePrecision("factor").notNull(),
+  },
+  (t) => [index("calculo_imputaciones_calculo_idx").on(t.calculo)],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Relevamiento = typeof relevamientos.$inferSelect;
@@ -252,3 +338,9 @@ export type Precio = typeof precios.$inferSelect;
 export type NewPrecio = typeof precios.$inferInsert;
 export type PrecioAuditoria = typeof precioAuditoria.$inferSelect;
 export type NewPrecioAuditoria = typeof precioAuditoria.$inferInsert;
+export type Calculo = typeof calculos.$inferSelect;
+export type NewCalculo = typeof calculos.$inferInsert;
+export type CalculoRelativo = typeof calculoRelativos.$inferSelect;
+export type NewCalculoRelativo = typeof calculoRelativos.$inferInsert;
+export type CalculoImputacion = typeof calculoImputaciones.$inferSelect;
+export type NewCalculoImputacion = typeof calculoImputaciones.$inferInsert;
