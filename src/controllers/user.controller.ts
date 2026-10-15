@@ -97,7 +97,8 @@ export function createUserController(users: UserRepository) {
         ...(typeof estado === "string" ? { estado: estado as NonNullable<UserFilter["estado"]> } : {}),
       };
 
-      const found = await users.list(filter, parsePage(req.query));
+      const [found, total] = await Promise.all([users.list(filter, parsePage(req.query)), users.count(filter)]);
+      res.setHeader("X-Total-Count", String(total));
       res.json(found.map(toUserView));
     },
 

@@ -107,12 +107,17 @@ describe("asignacion controller", () => {
 
   describe("list", () => {
     function listController() {
-      const captured: { filter?: unknown } = {};
+      const captured: { filter?: unknown; page?: unknown; counted?: unknown } = {};
       const c = controller({
         asignaciones: {
-          list: async (f: unknown) => {
+          list: async (f: unknown, page: unknown) => {
             captured.filter = f;
+            captured.page = page;
             return [];
+          },
+          count: async (f: unknown) => {
+            captured.counted = f;
+            return 12;
           },
         },
       });
@@ -133,12 +138,33 @@ describe("asignacion controller", () => {
       assert.deepEqual(captured.filter, { relevamiento: ID, estado: "PENDIENTE" });
     });
 
+    it("returns everything when there is no page, with the filtered total in X-Total-Count", async () => {
+      const { c, captured } = listController();
+
+      const res = await invoke(c.list, { query: { estado: "PENDIENTE" } }, COORDINADOR);
+
+      assert.equal(captured.page, undefined);
+      assert.deepEqual(captured.counted, { estado: "PENDIENTE" });
+      assert.equal(res.headers["x-total-count"], "12");
+    });
+
+    it("pages when page or limit is given and rejects invalid values", async () => {
+      const { c, captured } = listController();
+
+      await invoke(c.list, { query: { page: "2", limit: "5" } }, COORDINADOR);
+      assert.deepEqual(captured.page, { limit: 5, offset: 5 });
+
+      const res = await invoke(c.list, { query: { limit: "0" } }, COORDINADOR);
+      assert.equal(res.statusCode, 400);
+    });
+
     it("forces the own id for an ENCUESTADOR, ignoring a different one in the query", async () => {
       const { c, captured } = listController();
 
       await invoke(c.list, { query: { encuestador: OTHER } }, ENCUESTADOR);
 
       assert.deepEqual(captured.filter, { encuestador: ENC });
+      assert.deepEqual(captured.counted, { encuestador: ENC });
     });
   });
 

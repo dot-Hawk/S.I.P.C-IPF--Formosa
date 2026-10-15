@@ -120,10 +120,15 @@ describe("user controller management", () => {
   describe("list", () => {
     it("lists users without their password hash, passing the filters and the page", async () => {
       let received: unknown[] = [];
+      let counted: unknown;
       const repo = {
         list: async (...a: unknown[]) => {
           received = a;
           return [STORED];
+        },
+        count: async (filter: unknown) => {
+          counted = filter;
+          return 42;
         },
       };
 
@@ -135,6 +140,8 @@ describe("user controller management", () => {
 
       assert.equal(res.statusCode, 200);
       assert.deepEqual(received, [{ role: "ANALISTA", estado: "ACTIVO" }, { limit: 10, offset: 10 }]);
+      assert.deepEqual(counted, { role: "ANALISTA", estado: "ACTIVO" });
+      assert.equal(res.headers["x-total-count"], "42");
       assert.equal("passwordHash" in (res.body as object[])[0]!, false);
     });
 

@@ -14,6 +14,7 @@ import { type UserRepository } from "../repositories/user.repository.js";
 import { isUniqueViolation } from "../utils/db-errors.js";
 import { isUuid } from "../utils/uuid.js";
 import { validateAsignacionFilters } from "../validators/asignacion.validator.js";
+import { parsePage, validatePagination } from "../validators/pagination.js";
 
 export interface AsignacionRepositories {
   asignaciones: AsignacionRepository;
@@ -103,8 +104,9 @@ export function createAsignacionController(repos: AsignacionRepositories) {
       }
 
       const validation = validateAsignacionFilters(req.query);
-      if (!validation.valid) {
-        res.status(400).json({ errors: validation.errors });
+      const pagination = validatePagination(req.query);
+      if (!validation.valid || pagination.length > 0) {
+        res.status(400).json({ errors: [...validation.errors, ...pagination] });
         return;
       }
 
@@ -115,7 +117,14 @@ export function createAsignacionController(repos: AsignacionRepositories) {
       }
       if (auth.role === "ENCUESTADOR") filter["encuestador"] = auth.userId;
 
-      res.json(await repos.asignaciones.list(filter as AsignacionFilter));
+      // Every row unless page or limit is given; X-Total-Count is always the filtered total.
+      const paged = req.query["page"] !== undefined || req.query["limit"] !== undefined;
+      const [found, total] = await Promise.all([
+        repos.asignaciones.list(filter as AsignacionFilter, paged ? parsePage(req.query) : undefined),
+        repos.asignaciones.count(filter as AsignacionFilter),
+      ]);
+      res.setHeader("X-Total-Count", String(total));
+      res.json(found);
     },
 
     async getById(req: Request, res: Response): Promise<void> {

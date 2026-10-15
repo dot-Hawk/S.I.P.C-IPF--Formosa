@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, count, eq, type SQL } from "drizzle-orm";
 import { type Db } from "../db/client.js";
 import { users, type NewUser, type User } from "../db/schema.js";
 import { type EstadoUsuario, type Role } from "../domain/enums.js";
@@ -20,8 +20,17 @@ export interface UserRepository {
   create(data: NewUser): Promise<User>;
   touchLastAccess(id: string, at: Date): Promise<void>;
   list(filter: UserFilter, page: Page): Promise<User[]>;
+  // Total of users matching the filter, regardless of the page.
+  count(filter: UserFilter): Promise<number>;
   // Null when the user does not exist.
   update(id: string, changes: UserChanges): Promise<User | null>;
+}
+
+function filterConditions(filter: UserFilter): SQL | undefined {
+  return and(
+    filter.role !== undefined ? eq(users.role, filter.role) : undefined,
+    filter.estado !== undefined ? eq(users.estado, filter.estado) : undefined,
+  );
 }
 
 export function createUserRepository(db: Db): UserRepository {
@@ -55,15 +64,15 @@ export function createUserRepository(db: Db): UserRepository {
       return db
         .select()
         .from(users)
-        .where(
-          and(
-            filter.role !== undefined ? eq(users.role, filter.role) : undefined,
-            filter.estado !== undefined ? eq(users.estado, filter.estado) : undefined,
-          ),
-        )
+        .where(filterConditions(filter))
         .orderBy(asc(users.apellido), asc(users.nombre), asc(users.id))
         .limit(page.limit)
         .offset(page.offset);
+    },
+
+    async count(filter) {
+      const [row] = await db.select({ total: count() }).from(users).where(filterConditions(filter));
+      return row?.total ?? 0;
     },
 
     async update(id, changes) {
