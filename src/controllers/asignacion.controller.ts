@@ -1,6 +1,7 @@
 import { type Request, type Response } from "express";
 import { type AuthPayload } from "../auth/token.service.js";
 import { canTransition } from "../domain/asignacion.rules.js";
+import { ERROR_CODES } from "../domain/error-codes.js";
 import { AUTH_LOCALS_KEY } from "../middlewares/authenticate.middleware.js";
 import { type Asignacion } from "../db/schema.js";
 import {
@@ -53,7 +54,7 @@ export function createAsignacionController(repos: AsignacionRepositories) {
         return;
       }
       if (relevamiento.estado !== "ABIERTO") {
-        res.status(409).json({ message: "Relevamiento is not ABIERTO" });
+        res.status(409).json({ message: "Relevamiento is not ABIERTO", code: ERROR_CODES.RELEVAMIENTO_NOT_ABIERTO });
         return;
       }
 
@@ -84,7 +85,10 @@ export function createAsignacionController(repos: AsignacionRepositories) {
         res.status(201).json(asignacion);
       } catch (error) {
         if (isUniqueViolation(error)) {
-          res.status(409).json({ message: "This comercio is already assigned in this relevamiento" });
+          res.status(409).json({
+            message: "This comercio is already assigned in this relevamiento",
+            code: ERROR_CODES.COMERCIO_ALREADY_ASSIGNED,
+          });
           return;
         }
         throw error;
@@ -157,20 +161,26 @@ export function createAsignacionController(repos: AsignacionRepositories) {
 
       const target = req.body.estado;
       if (!canTransition(asignacion.estado, target)) {
-        res.status(409).json({ message: `Cannot change estado from ${asignacion.estado} to ${target}` });
+        res.status(409).json({
+          message: `Cannot change estado from ${asignacion.estado} to ${target}`,
+          code: ERROR_CODES.INVALID_ESTADO_TRANSITION,
+        });
         return;
       }
 
       const relevamiento = await repos.relevamientos.findById(asignacion.relevamiento);
       if (!relevamiento || relevamiento.estado !== "ABIERTO") {
-        res.status(409).json({ message: "Relevamiento is not ABIERTO" });
+        res.status(409).json({ message: "Relevamiento is not ABIERTO", code: ERROR_CODES.RELEVAMIENTO_NOT_ABIERTO });
         return;
       }
 
       // Conditional on the estado we just read, so a concurrent change cannot be overwritten.
       const updated = await repos.asignaciones.transitionEstado(id, asignacion.estado, target);
       if (!updated) {
-        res.status(409).json({ message: "Asignacion was modified concurrently, try again" });
+        res.status(409).json({
+          message: "Asignacion was modified concurrently, try again",
+          code: ERROR_CODES.ASIGNACION_CONCURRENT_MODIFICATION,
+        });
         return;
       }
 
@@ -198,7 +208,10 @@ export function createAsignacionController(repos: AsignacionRepositories) {
       }
 
       if (await repos.asignaciones.findById(id)) {
-        res.status(409).json({ message: "Only a PENDIENTE asignacion can be reassigned" });
+        res.status(409).json({
+          message: "Only a PENDIENTE asignacion can be reassigned",
+          code: ERROR_CODES.ASIGNACION_NOT_PENDIENTE,
+        });
         return;
       }
 

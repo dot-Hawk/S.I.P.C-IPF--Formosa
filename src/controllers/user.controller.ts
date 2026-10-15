@@ -3,12 +3,14 @@ import { type Request, type Response } from "express";
 import { type User } from "../db/schema.js";
 import { AUTH_LOCALS_KEY } from "../middlewares/authenticate.middleware.js";
 import { type UserChanges, type UserFilter, type UserRepository } from "../repositories/user.repository.js";
-import { isUniqueViolation } from "../utils/db-errors.js";
+import { ERROR_CODES } from "../domain/error-codes.js";
+import { isUniqueViolation, uniqueViolationColumns } from "../utils/db-errors.js";
 import { isUuid } from "../utils/uuid.js";
 import { parsePage, validatePagination } from "../validators/pagination.js";
 import { validateUserFilters } from "../validators/user.validator.js";
 
 const BCRYPT_ROUNDS = 10;
+const UNIQUE_FIELDS = ["dni", "legajo", "email"] as const;
 const EDITABLE_FIELDS = ["nombre", "apellido", "dni", "legajo", "role"] as const;
 
 // Never exposes the password hash.
@@ -23,6 +25,19 @@ export function toUserView(user: User) {
     role: user.role,
     estado: user.estado,
     ultimoAcceso: user.ultimoAcceso,
+  };
+}
+
+// The 409 of a uniqueness collision, naming the field(s) that collided when the driver says so.
+function duplicateUserBody(error: unknown) {
+  const columns = uniqueViolationColumns(error);
+  return {
+    message: "A user with this dni, legajo or email already exists",
+    code: ERROR_CODES.USER_DUPLICATE,
+    errors: UNIQUE_FIELDS.filter((field) => columns.includes(field)).map((field) => ({
+      field,
+      message: `A user with this ${field} already exists`,
+    })),
   };
 }
 
@@ -60,7 +75,7 @@ export function createUserController(users: UserRepository) {
         });
       } catch (error) {
         if (isUniqueViolation(error)) {
-          res.status(409).json({ message: "A user with this dni, legajo or email already exists" });
+          res.status(409).json(duplicateUserBody(error));
           return;
         }
         throw error;
@@ -131,7 +146,7 @@ export function createUserController(users: UserRepository) {
         res.json(toUserView(user));
       } catch (error) {
         if (isUniqueViolation(error)) {
-          res.status(409).json({ message: "A user with this dni, legajo or email already exists" });
+          res.status(409).json(duplicateUserBody(error));
           return;
         }
         throw error;

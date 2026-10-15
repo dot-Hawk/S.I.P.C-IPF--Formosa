@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
 import { type UserRepository } from "../repositories/user.repository.js";
 import { authLocals, invoke } from "../testing/http.js";
+import { ERROR_CODES } from "../domain/error-codes.js";
 import { createUserController } from "./user.controller.js";
 
 const BODY = {
@@ -52,6 +53,26 @@ describe("user controller create", () => {
     await create(repo as unknown as Partial<UserRepository>, { ...BODY, email: "  Ana@Example.COM " });
 
     assert.equal(received?.["email"], "ana@example.com");
+  });
+
+  it("answers 409 with a stable code and the colliding field", async () => {
+    for (const field of ["dni", "legajo", "email"]) {
+      const repo = {
+        create: async () => {
+          throw Object.assign(new Error("Failed query"), {
+            cause: { code: "23505", detail: `Key (${field})=(x) already exists.` },
+          });
+        },
+      };
+
+      const res = await create(repo as unknown as Partial<UserRepository>);
+
+      assert.equal(res.statusCode, 409);
+      const body = res.body as { message: string; code: string; errors: { field: string; message: string }[] };
+      assert.equal(body.code, ERROR_CODES.USER_DUPLICATE);
+      assert.equal(body.errors.length, 1);
+      assert.equal(body.errors[0]?.field, field);
+    }
   });
 
   it("answers 409 on duplicate dni, legajo or email", async () => {
@@ -177,6 +198,22 @@ describe("user controller management", () => {
 
       assert.equal((await invoke(missing.update, { params: { id: TARGET }, body: { nombre: "A" } }, COORD)).statusCode, 404);
       assert.equal((await invoke(duplicated.update, { params: { id: TARGET }, body: { dni: "1" } }, COORD)).statusCode, 409);
+    });
+
+    it("answers 409 with the code and the colliding field", async () => {
+      const duplicated = controller({
+        update: async () => {
+          throw Object.assign(new Error("Failed query"), {
+            cause: { code: "23505", detail: "Key (legajo)=(L-1) already exists." },
+          });
+        },
+      });
+
+      const res = await invoke(duplicated.update, { params: { id: TARGET }, body: { legajo: "L-1" } }, COORD);
+
+      const body = res.body as { code: string; errors: { field: string }[] };
+      assert.equal(body.code, ERROR_CODES.USER_DUPLICATE);
+      assert.deepEqual(body.errors.map((e) => e.field), ["legajo"]);
     });
   });
 

@@ -18,3 +18,19 @@ export function isUniqueViolation(error: unknown): boolean {
 export function isForeignKeyViolation(error: unknown): boolean {
   return sqlState(error) === FOREIGN_KEY_VIOLATION;
 }
+
+function uniqueDetail(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+
+  const detail = (error as { detail?: unknown }).detail;
+  if (typeof detail === "string") return detail;
+
+  return uniqueDetail((error as { cause?: unknown }).cause);
+}
+
+// Columns of the key that collided, read from the driver's `Key (col, ...)=(...)` detail. The
+// constraint stays the source of truth; this only tells the caller which fields to blame.
+export function uniqueViolationColumns(error: unknown): string[] {
+  const match = /^Key \(([^)]+)\)=/.exec(uniqueDetail(error) ?? "");
+  return match?.[1] ? match[1].split(",").map((column) => column.trim()) : [];
+}
