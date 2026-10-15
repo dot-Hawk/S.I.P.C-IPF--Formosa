@@ -6,9 +6,10 @@ import { authorize } from "../middlewares/authorize.middleware.js";
 import { validateRelevamiento } from "../middlewares/validate-relevamiento.middleware.js";
 import { getDb } from "../db/index.js";
 import { createRelevamientoRepository } from "../repositories/relevamiento.repository.js";
+import { createUserRepository } from "../repositories/user.repository.js";
 
 const controller = createRelevamientoController(createRelevamientoRepository(getDb()));
-const authenticate = createAuthenticate(getAuthConfig().secret);
+const authenticate = createAuthenticate(getAuthConfig().secret, createUserRepository(getDb()));
 
 const relevamientoRouter = Router();
 

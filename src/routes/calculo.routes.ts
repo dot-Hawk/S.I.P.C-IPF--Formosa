@@ -15,6 +15,7 @@ import {
   type EngineClient,
 } from "../services/engine-client.js";
 import { validateCalculoCreate } from "../validators/calculo.validator.js";
+import { createUserRepository } from "../repositories/user.repository.js";
 
 // The engine is configured lazily: the API boots (and everything else works) without it.
 let httpClient: EngineClient | undefined;
@@ -40,7 +41,7 @@ const db = getDb();
 const calculos = createCalculoRepository(db);
 const service = createCalculoService({ calculos, canasta: createCanastaRepository(db), engine });
 const controller = createCalculoController(service, calculos);
-const authenticate = createAuthenticate(getAuthConfig().secret);
+const authenticate = createAuthenticate(getAuthConfig().secret, createUserRepository(getDb()));
 
 const calculoRouter = Router();
 

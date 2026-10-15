@@ -5,9 +5,10 @@ import { createAuthenticate } from "../middlewares/authenticate.middleware.js";
 import { authorize } from "../middlewares/authorize.middleware.js";
 import { getDb } from "../db/index.js";
 import { createAuditoriaRepository } from "../repositories/auditoria.repository.js";
+import { createUserRepository } from "../repositories/user.repository.js";
 
 const controller = createAuditoriaController(createAuditoriaRepository(getDb()));
-const authenticate = createAuthenticate(getAuthConfig().secret);
+const authenticate = createAuthenticate(getAuthConfig().secret, createUserRepository(getDb()));
 
 const auditoriaRouter = Router();
 

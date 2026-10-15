@@ -15,6 +15,7 @@ import { createProductoRepository } from "../repositories/producto.repository.js
 import { createRelevamientoRepository } from "../repositories/relevamiento.repository.js";
 import { createLocalDiskStorage } from "../storage/attachment-storage.js";
 import { validatePrecioCreate, validatePrecioUpdate } from "../validators/precio.validator.js";
+import { createUserRepository } from "../repositories/user.repository.js";
 
 const db = getDb();
 const precios = createPrecioRepository(db);
@@ -36,7 +37,7 @@ const adjuntoController = createAdjuntoController({ precios, relevamientos, asig
 // The file is the raw body, whatever its Content-Type: the real type is decided from the bytes.
 // Past the limit the parser answers 413 before the file is buffered.
 const rawFile = express.raw({ type: () => true, limit: MAX_ADJUNTO_BYTES });
-const authenticate = createAuthenticate(getAuthConfig().secret);
+const authenticate = createAuthenticate(getAuthConfig().secret, createUserRepository(getDb()));
 
 const precioRouter = Router();
 

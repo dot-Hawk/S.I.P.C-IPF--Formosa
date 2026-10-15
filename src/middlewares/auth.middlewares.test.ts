@@ -32,13 +32,13 @@ function fakeResponse(): FakeResponse {
   return res;
 }
 
-function run(
-  middleware: (req: Request, res: Response, next: NextFunction) => void,
+async function run(
+  middleware: (req: Request, res: Response, next: NextFunction) => void | Promise<void>,
   headers: Record<string, string>,
   res: FakeResponse,
-): boolean {
+): Promise<boolean> {
   let nextCalled = false;
-  middleware(
+  await middleware(
     { headers } as unknown as Request,
     res as unknown as Response,
     () => {
@@ -49,58 +49,82 @@ function run(
 }
 
 describe("authenticate", () => {
-  const authenticate = createAuthenticate(SECRET);
+  let current: { id: string; role: string; estado: string } | null = {
+    id: "u1",
+    role: "SUPERVISOR",
+    estado: "ACTIVO",
+  };
+  const authenticate = createAuthenticate(SECRET, { findById: async () => current } as never);
+  const token = () => signToken({ userId: "u1", role: "SUPERVISOR" }, SECRET, "1h");
 
-  it("answers 401 without an Authorization header", () => {
+  it("answers 401 without an Authorization header", async () => {
     const res = fakeResponse();
 
-    assert.equal(run(authenticate, {}, res), false);
+    assert.equal(await run(authenticate, {}, res), false);
     assert.equal(res.statusCode, 401);
   });
 
-  it("answers 401 on a non-Bearer scheme", () => {
+  it("answers 401 on a non-Bearer scheme", async () => {
     const res = fakeResponse();
 
-    assert.equal(run(authenticate, { authorization: "Basic abc" }, res), false);
+    assert.equal(await run(authenticate, { authorization: "Basic abc" }, res), false);
     assert.equal(res.statusCode, 401);
   });
 
-  it("answers 401 on an invalid token", () => {
+  it("answers 401 on an invalid token", async () => {
     const res = fakeResponse();
 
-    assert.equal(run(authenticate, { authorization: "Bearer nope" }, res), false);
+    assert.equal(await run(authenticate, { authorization: "Bearer nope" }, res), false);
     assert.equal(res.statusCode, 401);
   });
 
-  it("stores the payload in res.locals and calls next on a valid token", () => {
+  it("stores the identity in res.locals and calls next for a valid token of an active user", async () => {
+    current = { id: "u1", role: "SUPERVISOR", estado: "ACTIVO" };
     const res = fakeResponse();
-    const token = signToken({ userId: "u1", role: "SUPERVISOR" }, SECRET, "1h");
 
-    assert.equal(run(authenticate, { authorization: `Bearer ${token}` }, res), true);
+    assert.equal(await run(authenticate, { authorization: `Bearer ${token()}` }, res), true);
     assert.deepEqual(res.locals["auth"], { userId: "u1", role: "SUPERVISOR" });
+  });
+
+  it("takes the role from the database, so a role change applies to tokens already issued", async () => {
+    current = { id: "u1", role: "ANALISTA", estado: "ACTIVO" };
+    const res = fakeResponse();
+
+    assert.equal(await run(authenticate, { authorization: `Bearer ${token()}` }, res), true);
+    assert.deepEqual(res.locals["auth"], { userId: "u1", role: "ANALISTA" });
+  });
+
+  it("answers 401 when the user was deactivated, put on leave or no longer exists", async () => {
+    for (const state of [{ id: "u1", role: "SUPERVISOR", estado: "INACTIVO" }, { id: "u1", role: "SUPERVISOR", estado: "LICENCIA" }, null]) {
+      current = state;
+      const res = fakeResponse();
+
+      assert.equal(await run(authenticate, { authorization: `Bearer ${token()}` }, res), false);
+      assert.equal(res.statusCode, 401);
+    }
   });
 });
 
 describe("authorize", () => {
-  it("answers 401 when there is no authenticated user", () => {
+  it("answers 401 when there is no authenticated user", async () => {
     const res = fakeResponse();
 
-    assert.equal(run(authorize("COORDINADOR"), {}, res), false);
+    assert.equal(await run(authorize("COORDINADOR"), {}, res), false);
     assert.equal(res.statusCode, 401);
   });
 
-  it("answers 403 when the role is not allowed", () => {
+  it("answers 403 when the role is not allowed", async () => {
     const res = fakeResponse();
     res.locals["auth"] = { userId: "u1", role: "DIRECCION" };
 
-    assert.equal(run(authorize("COORDINADOR"), {}, res), false);
+    assert.equal(await run(authorize("COORDINADOR"), {}, res), false);
     assert.equal(res.statusCode, 403);
   });
 
-  it("calls next when the role is allowed", () => {
+  it("calls next when the role is allowed", async () => {
     const res = fakeResponse();
     res.locals["auth"] = { userId: "u1", role: "COORDINADOR" };
 
-    assert.equal(run(authorize("COORDINADOR", "ANALISTA"), {}, res), true);
+    assert.equal(await run(authorize("COORDINADOR", "ANALISTA"), {}, res), true);
   });
 });

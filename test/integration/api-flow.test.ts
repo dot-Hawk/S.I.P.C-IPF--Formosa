@@ -549,6 +549,85 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     assert.equal(missing.status, 404);
   });
 
+  it("manages users: estado and role apply immediately, passwords can be changed and reset", async () => {
+    const { coord } = state;
+    const draft = {
+      nombre: "Temp",
+      apellido: "Usuario",
+      dni: "40000001",
+      legajo: "L-Temp",
+      email: "temp@integration.test",
+      password: PASSWORD,
+      role: "ENCUESTADOR",
+    };
+    const created = await api("POST", "/api/users", { token: coord.token, body: draft });
+    assert.equal(created.status, 201);
+    const tempId = created.body.id as string;
+    const temp = await login(draft.email, PASSWORD);
+
+    const me = await api("GET", "/api/auth/me", { token: temp.token });
+    assert.equal(me.status, 200);
+    assert.equal(me.body.email, draft.email);
+    assert.equal(me.body.passwordHash, undefined);
+
+    // Listing and reading are for the coordinator; the hash never leaves.
+    const list = await api("GET", "/api/users?role=ENCUESTADOR&estado=ACTIVO&limit=50", { token: coord.token });
+    assert.equal(list.status, 200);
+    assert.ok(list.body.some((u: { id: string }) => u.id === tempId));
+    assert.ok(list.body.every((u: { passwordHash?: string }) => u.passwordHash === undefined));
+    assert.equal((await api("GET", "/api/users", { token: temp.token })).status, 403);
+    assert.equal((await api("GET", "/api/users?role=ROOT", { token: coord.token })).status, 400);
+
+    // A role change applies to the token already issued.
+    assert.equal((await api("GET", "/api/calculos", { token: temp.token })).status, 403);
+    const promoted = await api("PATCH", `/api/users/${tempId}`, { token: coord.token, body: { role: "ANALISTA" } });
+    assert.equal(promoted.status, 200);
+    assert.equal((await api("GET", "/api/calculos", { token: temp.token })).status, 200);
+
+    // Duplicates are refused and the coordinator cannot lock themselves out.
+    assert.equal(
+      (await api("PATCH", `/api/users/${tempId}`, { token: coord.token, body: { dni: "10000001" } })).status,
+      409,
+    );
+    assert.equal(
+      (await api("PATCH", `/api/users/${coord.id}`, { token: coord.token, body: { role: "ANALISTA" } })).status,
+      403,
+    );
+    assert.equal(
+      (await api("PATCH", `/api/users/${coord.id}/estado`, { token: coord.token, body: { estado: "INACTIVO" } })).status,
+      403,
+    );
+
+    // Deactivating cuts the session at once, and reactivating gives access back.
+    const off = await api("PATCH", `/api/users/${tempId}/estado`, { token: coord.token, body: { estado: "INACTIVO" } });
+    assert.equal(off.body.estado, "INACTIVO");
+    assert.equal((await api("GET", "/api/auth/me", { token: temp.token })).status, 401);
+    assert.equal((await login(draft.email, PASSWORD)).status, 401);
+    await api("PATCH", `/api/users/${tempId}/estado`, { token: coord.token, body: { estado: "ACTIVO" } });
+    assert.equal((await api("GET", "/api/auth/me", { token: temp.token })).status, 200);
+
+    // Own password change needs the current one; the coordinator can reset it.
+    const wrong = await api("POST", "/api/auth/password", {
+      token: temp.token,
+      body: { currentPassword: "nope-nope", newPassword: "another-password-1" },
+    });
+    assert.equal(wrong.status, 400);
+    const changed = await api("POST", "/api/auth/password", {
+      token: temp.token,
+      body: { currentPassword: PASSWORD, newPassword: "another-password-1" },
+    });
+    assert.equal(changed.status, 204);
+    assert.equal((await login(draft.email, PASSWORD)).status, 401);
+    assert.equal((await login(draft.email, "another-password-1")).status, 200);
+
+    const reset = await api("PUT", `/api/users/${tempId}/password`, {
+      token: coord.token,
+      body: { password: "reset-by-coordinator-1" },
+    });
+    assert.equal(reset.status, 204);
+    assert.equal((await login(draft.email, "reset-by-coordinator-1")).status, 200);
+  });
+
   it("rate limits repeated failed logins without blocking other accounts", async () => {
     for (let i = 0; i < 5; i++) {
       assert.equal((await login("target@integration.test", "wrong")).status, 401);

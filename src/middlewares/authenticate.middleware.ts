@@ -1,10 +1,14 @@
 import { type NextFunction, type Request, type Response } from "express";
 import { verifyToken } from "../auth/token.service.js";
+import { type UserRepository } from "../repositories/user.repository.js";
 
 export const AUTH_LOCALS_KEY = "auth";
 
-export function createAuthenticate(secret: string) {
-  return function authenticate(req: Request, res: Response, next: NextFunction): void {
+// The token proves who the caller is; the database says whether they may still act and in what
+// role. So deactivating a user or changing their role takes effect on their very next request,
+// not when their token expires.
+export function createAuthenticate(secret: string, users: Pick<UserRepository, "findById">) {
+  return async function authenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
     const [scheme, token] = req.headers.authorization?.split(" ") ?? [];
 
     if (scheme !== "Bearer" || !token) {
@@ -18,7 +22,13 @@ export function createAuthenticate(secret: string) {
       return;
     }
 
-    res.locals[AUTH_LOCALS_KEY] = payload;
+    const user = await users.findById(payload.userId);
+    if (!user || user.estado !== "ACTIVO") {
+      res.status(401).json({ message: "Invalid or expired token" });
+      return;
+    }
+
+    res.locals[AUTH_LOCALS_KEY] = { userId: user.id, role: user.role };
     next();
   };
 }
