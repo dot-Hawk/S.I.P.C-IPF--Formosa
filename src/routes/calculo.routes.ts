@@ -51,6 +51,8 @@ const canRead = authorize("SUPERVISOR", "ANALISTA", "COORDINADOR", "DIRECCION");
 
 calculoRouter.post("/", canRun, validateBody(validateCalculoCreate), controller.create);
 calculoRouter.get("/", canRead, controller.list);
+// Before "/:id", which would take "exportacion" for an id.
+calculoRouter.get("/exportacion", canRun, controller.exportar);
 calculoRouter.get("/:id", canRead, controller.getById);
 calculoRouter.get("/:id/relativos", canRead, controller.relativos);
 calculoRouter.get("/:id/imputaciones", canRead, controller.imputaciones);

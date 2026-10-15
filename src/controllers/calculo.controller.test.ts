@@ -128,4 +128,77 @@ describe("calculo controller", () => {
       assert.equal(missing.statusCode, 404);
     });
   });
+
+  describe("exportar", () => {
+    const entrada = {
+      observaciones: [{ variedad: "1111101", informante: "c-1", tipo: "TRAD", mes: "2026-01", precio: 100 }],
+      variedades: [{ codigo: "1111101", grupos: ["A01"], tratamientoEspecial: false }],
+    };
+
+    it("sends an xlsx for the engine by default, as a download", async () => {
+      let received: unknown[] = [];
+      const service = {
+        exportar: async (...a: unknown[]) => {
+          received = a;
+          return entrada;
+        },
+      };
+
+      const res = await invoke(
+        controller({ service }).exportar,
+        { query: { mesBase: "2026-01", mesObjetivo: "2026-03", excluirOfertas: "true" } },
+        ANALISTA,
+      );
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(received, [{ mesBase: "2026-01", mesObjetivo: "2026-03", excluirOfertas: true }]);
+      assert.equal(
+        res.headers["content-type"],
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      assert.equal(res.headers["content-disposition"], 'attachment; filename="precios_2026-01_2026-03.xlsx"');
+      assert.equal(res.headers["cache-control"], "private, no-store");
+      assert.equal((res.body as Buffer).subarray(0, 2).toString(), "PK");
+    });
+
+    it("sends a csv of the prices when asked", async () => {
+      const service = { exportar: async () => entrada };
+
+      const res = await invoke(
+        controller({ service }).exportar,
+        { query: { mesBase: "2026-01", mesObjetivo: "2026-03", formato: "csv" } },
+        ANALISTA,
+      );
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.headers["content-type"], "text/csv; charset=utf-8");
+      assert.equal(res.headers["content-disposition"], 'attachment; filename="precios_2026-01_2026-03.csv"');
+      assert.equal(
+        String(res.body),
+        "VARIEDAD,INFORMANTE,TIPO,MES,PRECIO\r\n1111101,c-1,TRAD,2026-01,100\r\n",
+      );
+    });
+
+    it("answers 400 on an invalid query and maps the service errors", async () => {
+      const failing = {
+        exportar: async () => {
+          throw new CalculoError(409, "Hay relevamientos abiertos: 2026-01");
+        },
+      };
+
+      const bad = await invoke(
+        controller({ service: {} }).exportar,
+        { query: { mesBase: "enero", mesObjetivo: "2026-03", formato: "pdf" } },
+        ANALISTA,
+      );
+      const conflict = await invoke(
+        controller({ service: failing }).exportar,
+        { query: { mesBase: "2026-01", mesObjetivo: "2026-03" } },
+        ANALISTA,
+      );
+
+      assert.equal(bad.statusCode, 400);
+      assert.equal(conflict.statusCode, 409);
+    });
+  });
 });

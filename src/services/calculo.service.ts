@@ -6,6 +6,7 @@ import {
   nodosVariedad,
   rangoMeses,
 } from "../domain/calculo-input.js";
+import { type EngineObservacion, type EngineVariedad } from "../domain/calculo-input.js";
 import { type CalculoRepository } from "../repositories/calculo.repository.js";
 import { type CanastaRepository } from "../repositories/canasta.repository.js";
 import { EngineError, type EngineClient, type EngineParametros } from "./engine-client.js";
@@ -36,6 +37,11 @@ export interface EjecutarCalculoInput {
   parametros?: Partial<EngineParametros>;
 }
 
+export interface EntradaMotor {
+  observaciones: EngineObservacion[];
+  variedades: EngineVariedad[];
+}
+
 export interface CalculoServiceDeps {
   calculos: CalculoRepository;
   canasta: CanastaRepository;
@@ -60,22 +66,35 @@ export function createCalculoService({ calculos, canasta, engine }: CalculoServi
     }
   }
 
+  // What the engine takes: the observations of the range and the variedades with their groups.
+  // Shared by the run and by the export, so the file is exactly what a run would be fed.
+  async function prepararEntrada(input: EjecutarCalculoInput): Promise<EntradaMotor> {
+    const { mesBase, mesObjetivo } = input;
+
+    await assertRangoCerrado(mesBase, mesObjetivo);
+
+    const observaciones = buildObservaciones(await calculos.preciosEntre(mesBase, mesObjetivo), {
+      excluirOfertas: input.excluirOfertas ?? false,
+    });
+    if (observaciones.length === 0) {
+      throw new CalculoError(409, "No hay precios cargados en el rango indicado");
+    }
+
+    const variedades = buildVariedades(nodosVariedad(await canasta.findAll()));
+    return { observaciones, variedades };
+  }
+
   return {
+    async exportar(input: EjecutarCalculoInput): Promise<EntradaMotor> {
+      return prepararEntrada(input);
+    },
+
     async ejecutar(input: EjecutarCalculoInput, actor: { userId: string }): Promise<Calculo> {
       const { mesBase, mesObjetivo } = input;
       const excluirOfertas = input.excluirOfertas ?? false;
       const parametros: EngineParametros = { ...DEFAULT_PARAMETROS, ...input.parametros };
 
-      await assertRangoCerrado(mesBase, mesObjetivo);
-
-      const observaciones = buildObservaciones(await calculos.preciosEntre(mesBase, mesObjetivo), {
-        excluirOfertas,
-      });
-      if (observaciones.length === 0) {
-        throw new CalculoError(409, "No hay precios cargados en el rango indicado");
-      }
-
-      const variedades = buildVariedades(nodosVariedad(await canasta.findAll()));
+      const { observaciones, variedades } = await prepararEntrada(input);
       const request = { mesBase, mesObjetivo, observaciones, variedades, parametros };
 
       const base = {

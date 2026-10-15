@@ -202,4 +202,50 @@ describe("calculo service", () => {
     assert.equal(resumen.sinImputar, 1);
     assert.deepEqual(resumen.sinImputarDetalle, [{ variedad: "1111101", comercio: "c-9", mes: "2026-02" }]);
   });
+
+  describe("exportar", () => {
+    it("builds the same input the engine would receive, without calling it", async () => {
+      const { service, sent } = setup();
+
+      const entrada = await service.exportar({ mesBase: "2026-01", mesObjetivo: "2026-02" });
+
+      assert.equal(sent.length, 0);
+      assert.equal(entrada.observaciones.length, 2);
+      assert.deepEqual(entrada.variedades, [
+        { codigo: "1111101", grupos: ["A0111111", "A01111", "A0111", "A011", "A01", "A"], tratamientoEspecial: false },
+      ]);
+    });
+
+    it("applies the same rules: the whole range closed, with prices", async () => {
+      const open = setup({ relevamientos: [{ periodo: "2026-01", estado: "ABIERTO" }] });
+      const empty = setup({ filas: [] });
+
+      await assert.rejects(
+        () => open.service.exportar({ mesBase: "2026-01", mesObjetivo: "2026-01" }),
+        (e: unknown) => e instanceof CalculoError && e.status === 409,
+      );
+      await assert.rejects(
+        () => empty.service.exportar({ mesBase: "2026-01", mesObjetivo: "2026-02" }),
+        (e: unknown) => e instanceof CalculoError && e.status === 409,
+      );
+    });
+
+    it("leaves promotional prices out on request", async () => {
+      const filas: PrecioFila[] = [
+        ...FILAS,
+        { periodo: "2026-02", oferta: true, valor: 50, codigoVariedad: "1111101", comercio: "c-9", tipoComercio: "ALMACEN" },
+      ];
+      const { service } = setup({ filas });
+
+      const all = await service.exportar({ mesBase: "2026-01", mesObjetivo: "2026-02" });
+      const withoutOffers = await service.exportar({
+        mesBase: "2026-01",
+        mesObjetivo: "2026-02",
+        excluirOfertas: true,
+      });
+
+      assert.equal(all.observaciones.length, 3);
+      assert.equal(withoutOffers.observaciones.length, 2);
+    });
+  });
 });

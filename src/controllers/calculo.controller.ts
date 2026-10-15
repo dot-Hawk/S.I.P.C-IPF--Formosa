@@ -1,10 +1,12 @@
 import { type Request, type Response } from "express";
 import { type AuthPayload } from "../auth/token.service.js";
+import { preciosCsv } from "../domain/calculo-export.js";
 import { AUTH_LOCALS_KEY } from "../middlewares/authenticate.middleware.js";
 import { type CalculoRepository, type RelativosFilter } from "../repositories/calculo.repository.js";
 import { CalculoError, type createCalculoService } from "../services/calculo.service.js";
+import { buildExportWorkbook } from "../services/calculo-export.service.js";
 import { isUuid } from "../utils/uuid.js";
-import { validateRelativosFilters } from "../validators/calculo.validator.js";
+import { validateCalculoExportQuery, validateRelativosFilters } from "../validators/calculo.validator.js";
 import { parsePage, validatePagination } from "../validators/pagination.js";
 
 type CalculoService = ReturnType<typeof createCalculoService>;
@@ -47,6 +49,49 @@ export function createCalculoController(service: CalculoService, calculos: Calcu
         }
         throw error;
       }
+    },
+
+    // The file the analyst sends to the engine (or reviews): same input a run would use.
+    async exportar(req: Request, res: Response): Promise<void> {
+      const validation = validateCalculoExportQuery(req.query);
+      if (!validation.valid) {
+        res.status(400).json({ errors: validation.errors });
+        return;
+      }
+
+      const mesBase = String(req.query["mesBase"]);
+      const mesObjetivo = String(req.query["mesObjetivo"]);
+      const formato = req.query["formato"] === "csv" ? "csv" : "xlsx";
+
+      let entrada;
+      try {
+        entrada = await service.exportar({
+          mesBase,
+          mesObjetivo,
+          ...(req.query["excluirOfertas"] === undefined ? {} : { excluirOfertas: req.query["excluirOfertas"] === "true" }),
+        });
+      } catch (error) {
+        if (error instanceof CalculoError) {
+          res.status(error.status).json({ message: error.message });
+          return;
+        }
+        throw error;
+      }
+
+      const data =
+        formato === "csv"
+          ? Buffer.from(preciosCsv(entrada.observaciones), "utf8")
+          : await buildExportWorkbook(entrada.observaciones, entrada.variedades);
+
+      res.setHeader(
+        "Content-Type",
+        formato === "csv"
+          ? "text/csv; charset=utf-8"
+          : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader("Content-Disposition", `attachment; filename="precios_${mesBase}_${mesObjetivo}.${formato}"`);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.status(200).end(data);
     },
 
     async list(req: Request, res: Response): Promise<void> {

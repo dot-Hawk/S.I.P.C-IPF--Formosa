@@ -273,6 +273,44 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
     assert.equal(withoutOffers.body.excluirOfertas, true);
   });
 
+  it("exports the engine input as a file the engine accepts, with the same result as the run", async () => {
+    const query = "mesBase=2026-01&mesObjetivo=2026-03";
+    const url = (formato: string) => `${baseUrl}/api/calculos/exportacion?${query}&formato=${formato}`;
+    const headers = (token: string) => ({ authorization: `Bearer ${token}` });
+
+    assert.equal((await fetch(url("xlsx"), { headers: headers(tokens.encuestador) })).status, 403);
+
+    const csv = await fetch(url("csv"), { headers: headers(tokens.analista) });
+    assert.equal(csv.status, 200);
+    const lines = (await csv.text()).trim().split("\r\n");
+    assert.equal(lines[0], "VARIEDAD,INFORMANTE,TIPO,MES,PRECIO");
+    assert.ok(lines.length > 1);
+
+    const xlsx = await fetch(url("xlsx"), { headers: headers(tokens.analista) });
+    assert.equal(xlsx.status, 200);
+    const file = await xlsx.arrayBuffer();
+
+    const form = new FormData();
+    form.set("file", new Blob([file]), "precios.xlsx");
+    form.set("mesBase", "2026-01");
+    form.set("mesObjetivo", "2026-03");
+    const engineResponse = await fetch(`${ENGINE_TEST_URL}/v1/calculo/excel`, {
+      method: "POST",
+      headers: { "x-api-key": ENGINE_TEST_API_KEY as string },
+      body: form,
+    });
+    assert.equal(engineResponse.status, 200);
+    const fromFile = (await engineResponse.json()) as { relativos: { variedad: string; mes: string; valor: number }[] };
+
+    const stored = await api("GET", `/api/calculos/${calculoId}/relativos`, { token: tokens.analista });
+    const key = (r: { variedad: string; mes: string }) => `${r.variedad}|${r.mes}`;
+    const expected = new Map<string, number>(stored.body.map((r: { variedad: string; mes: string; valor: number }) => [key(r), r.valor]));
+    for (const relativo of fromFile.relativos.filter((r) => r.valor !== null)) {
+      assert.ok(Math.abs((expected.get(key(relativo)) ?? NaN) - relativo.valor) < 1e-9);
+    }
+    assert.equal(fromFile.relativos.filter((r) => r.valor !== null).length, stored.body.length);
+  });
+
   it("refuses to run while a relevamiento of the range is open", async () => {
     const { pool } = (db as NonNullable<typeof db>).getDbHandle();
     await pool.query("UPDATE relevamientos SET estado = 'ABIERTO' WHERE periodo = '2026-02'");

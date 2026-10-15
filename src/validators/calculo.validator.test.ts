@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { validateCalculoCreate, validateRelativosFilters } from "./calculo.validator.js";
+import { validateCalculoExportQuery, validateCalculoCreate, validateRelativosFilters } from "./calculo.validator.js";
 
 function fields(result: { errors: { field: string }[] }): string[] {
   return result.errors.map((e) => e.field).sort();
@@ -51,5 +51,25 @@ describe("validateRelativosFilters", () => {
 
   it("rejects malformed values", () => {
     assert.deepEqual(fields(validateRelativosFilters({ variedad: "abc", mes: "x" })), ["mes", "variedad"]);
+  });
+});
+
+describe("validateCalculoExportQuery", () => {
+  const valid = { mesBase: "2026-01", mesObjetivo: "2026-10" };
+
+  it("accepts the range alone and the optional flags as strings", () => {
+    assert.equal(validateCalculoExportQuery(valid).valid, true);
+    assert.equal(
+      validateCalculoExportQuery({ ...valid, excluirOfertas: "false", formato: "csv" }).valid,
+      true,
+    );
+    assert.equal(validateCalculoExportQuery({ ...valid, formato: "xlsx" }).valid, true);
+  });
+
+  it("rejects a bad range, flag or format", () => {
+    assert.deepEqual(fields(validateCalculoExportQuery({ mesBase: "enero", mesObjetivo: "2026-10" })), ["mesBase"]);
+    assert.deepEqual(fields(validateCalculoExportQuery({ ...valid, mesObjetivo: "2025-12" })), ["mesObjetivo"]);
+    assert.deepEqual(fields(validateCalculoExportQuery({ ...valid, excluirOfertas: "yes" })), ["excluirOfertas"]);
+    assert.deepEqual(fields(validateCalculoExportQuery({ ...valid, formato: "pdf" })), ["formato"]);
   });
 });
