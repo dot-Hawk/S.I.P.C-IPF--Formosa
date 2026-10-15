@@ -41,6 +41,48 @@ describe("user controller create", () => {
     assert.equal("password" in (res.body as object), false);
   });
 
+  it("trims nombre, apellido, dni and legajo", async () => {
+    let received: Record<string, unknown> | undefined;
+    const repo = {
+      create: async (data: Record<string, unknown>) => {
+        received = data;
+        return { id: "u-1", ...data };
+      },
+    };
+
+    await create(repo as unknown as Partial<UserRepository>, {
+      ...BODY,
+      nombre: " Ana ",
+      apellido: "\tPerez ",
+      dni: " 30123456 ",
+      legajo: " L-100 ",
+    });
+
+    assert.equal(received?.["nombre"], "Ana");
+    assert.equal(received?.["apellido"], "Perez");
+    assert.equal(received?.["dni"], "30123456");
+    assert.equal(received?.["legajo"], "L-100");
+  });
+
+  it("answers with the same view as the other endpoints, ultimoAcceso included", async () => {
+    const stored = { id: "u-1", ...BODY, passwordHash: "x", estado: "ACTIVO", ultimoAcceso: null };
+    const repo = { create: async () => stored };
+
+    const res = await create(repo as unknown as Partial<UserRepository>);
+
+    assert.deepEqual(res.body, {
+      id: "u-1",
+      nombre: "Ana",
+      apellido: "Perez",
+      dni: "30123456",
+      legajo: "L-100",
+      email: "ana@example.com",
+      role: "ANALISTA",
+      estado: "ACTIVO",
+      ultimoAcceso: null,
+    });
+  });
+
   it("stores the email trimmed and lowercase", async () => {
     let received: Record<string, unknown> | undefined;
     const repo = {

@@ -11,7 +11,8 @@ import { validateUserFilters } from "../validators/user.validator.js";
 
 const BCRYPT_ROUNDS = 10;
 const UNIQUE_FIELDS = ["dni", "legajo", "email"] as const;
-const EDITABLE_FIELDS = ["nombre", "apellido", "dni", "legajo", "role"] as const;
+const TEXT_FIELDS = ["nombre", "apellido", "dni", "legajo"] as const;
+const EDITABLE_FIELDS = [...TEXT_FIELDS, "role"] as const;
 
 // Never exposes the password hash.
 export function toUserView(user: User) {
@@ -41,6 +42,16 @@ function duplicateUserBody(error: unknown) {
   };
 }
 
+// Copies the given fields that are present, trimming strings; shared by create and update.
+function trimmedFields<K extends string>(body: Record<string, unknown>, fields: readonly K[]) {
+  const picked: Partial<Record<K, unknown>> = {};
+  for (const field of fields) {
+    const value = body[field];
+    if (value !== undefined) picked[field] = typeof value === "string" ? value.trim() : value;
+  }
+  return picked;
+}
+
 function callerId(res: Response): string | undefined {
   return (res.locals[AUTH_LOCALS_KEY] as { userId?: string } | undefined)?.userId;
 }
@@ -48,7 +59,11 @@ function callerId(res: Response): string | undefined {
 export function createUserController(users: UserRepository) {
   return {
     async create(req: Request, res: Response): Promise<void> {
-      const { nombre, apellido, dni, legajo, email, password, role } = req.body;
+      const { email, password, role } = req.body;
+      const { nombre, apellido, dni, legajo } = trimmedFields(req.body, TEXT_FIELDS) as Record<
+        (typeof TEXT_FIELDS)[number],
+        string
+      >;
 
       try {
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
@@ -63,16 +78,7 @@ export function createUserController(users: UserRepository) {
           estado: "ACTIVO",
         });
 
-        res.status(201).json({
-          id: user.id,
-          nombre: user.nombre,
-          apellido: user.apellido,
-          dni: user.dni,
-          legajo: user.legajo,
-          email: user.email,
-          role: user.role,
-          estado: user.estado,
-        });
+        res.status(201).json(toUserView(user));
       } catch (error) {
         if (isUniqueViolation(error)) {
           res.status(409).json(duplicateUserBody(error));
@@ -131,11 +137,7 @@ export function createUserController(users: UserRepository) {
         return;
       }
 
-      const changes: UserChanges = {};
-      for (const field of EDITABLE_FIELDS) {
-        const value = req.body[field];
-        if (value !== undefined) (changes as Record<string, unknown>)[field] = typeof value === "string" ? value.trim() : value;
-      }
+      const changes: UserChanges = trimmedFields(req.body, EDITABLE_FIELDS) as UserChanges;
       if (req.body.email !== undefined) changes.email = String(req.body.email).trim().toLowerCase();
 
       try {
