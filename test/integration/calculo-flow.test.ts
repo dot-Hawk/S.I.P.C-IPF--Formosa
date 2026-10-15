@@ -273,6 +273,22 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
     assert.equal(withoutOffers.body.excluirOfertas, true);
   });
 
+  it("downloads the planilla of a run for every reading role", async () => {
+    const url = `${baseUrl}/api/calculos/${calculoId}/resultados`;
+
+    const csv = await fetch(`${url}?formato=csv`, { headers: { authorization: `Bearer ${tokens.coord}` } });
+    assert.equal(csv.status, 200);
+    const lines = (await csv.text()).trim().split("\r\n");
+    assert.equal(lines[0], "VARIEDAD,2026-02,2026-03");
+    assert.equal(lines.length, 1 + new Set((await api("GET", `/api/calculos/${calculoId}/relativos`, { token: tokens.coord })).body.map((r: { variedad: string }) => r.variedad)).size);
+
+    const xlsx = await fetch(url, { headers: { authorization: `Bearer ${tokens.analista}` } });
+    assert.equal(xlsx.status, 200);
+    assert.equal((await xlsx.arrayBuffer()).byteLength > 0, true);
+
+    assert.equal((await fetch(url, { headers: { authorization: `Bearer ${tokens.encuestador}` } })).status, 403);
+  });
+
   it("exports the engine input as a file the engine accepts, with the same result as the run", async () => {
     const query = "mesBase=2026-01&mesObjetivo=2026-03";
     const url = (formato: string) => `${baseUrl}/api/calculos/exportacion?${query}&formato=${formato}`;

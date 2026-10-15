@@ -45,6 +45,8 @@ export interface CalculoRepository {
   findById(id: string): Promise<Calculo | null>;
   relativos(calculo: string, filter: RelativosFilter): Promise<CalculoRelativo[]>;
   imputaciones(calculo: string, page: Page): Promise<CalculoImputacion[]>;
+  // Every imputation of the run, for the planilla download.
+  allImputaciones(calculo: string): Promise<CalculoImputacion[]>;
 }
 
 const INSERT_BATCH = 2000;
@@ -135,6 +137,14 @@ export function createCalculoRepository(db: Db): CalculoRepository {
         .orderBy(asc(calculoImputaciones.mes), asc(calculoImputaciones.variedad), asc(calculoImputaciones.id))
         .limit(page.limit)
         .offset(page.offset);
+    },
+
+    async allImputaciones(calculo) {
+      return db
+        .select()
+        .from(calculoImputaciones)
+        .where(eq(calculoImputaciones.calculo, calculo))
+        .orderBy(asc(calculoImputaciones.mes), asc(calculoImputaciones.variedad), asc(calculoImputaciones.id));
     },
   };
 }

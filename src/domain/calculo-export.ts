@@ -2,7 +2,7 @@ import { type EngineObservacion, type EngineVariedad } from "./calculo-input.js"
 
 export const PRECIOS_COLUMNAS = ["VARIEDAD", "INFORMANTE", "TIPO", "MES", "PRECIO"] as const;
 
-function csvField(value: string | number): string {
+export function csvField(value: string | number): string {
   const text = String(value);
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }

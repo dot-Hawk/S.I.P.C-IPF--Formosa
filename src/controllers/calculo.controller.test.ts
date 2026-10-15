@@ -201,4 +201,58 @@ describe("calculo controller", () => {
       assert.equal(conflict.statusCode, 409);
     });
   });
+
+  describe("resultados", () => {
+    const calculo = {
+      id: ID,
+      estado: "COMPLETADO",
+      mesBase: "2026-01",
+      mesObjetivo: "2026-03",
+      excluirOfertas: false,
+      motorVersion: "0.1.0",
+      entradaHash: "abc",
+      parametros: { esperarMeses: 2, pesoSuper: 0.25, pesoTrad: 0.75, omitirGruposCompletos: true },
+      createdAt: new Date("2026-10-14T12:00:00Z"),
+    };
+    const calculos = {
+      findById: async () => calculo,
+      relativos: async () => [{ variedad: "1111101", mes: "2026-02", valor: 1.1, nSuper: 1, nTrad: 2 }],
+      allImputaciones: async () => [],
+    };
+
+    it("sends the run's results as xlsx by default and as csv when asked", async () => {
+      const xlsx = await invoke(controller({ calculos }).resultados, { params: { id: ID }, query: {} }, ANALISTA);
+      const csv = await invoke(
+        controller({ calculos }).resultados,
+        { params: { id: ID }, query: { formato: "csv" } },
+        ANALISTA,
+      );
+
+      assert.equal(xlsx.statusCode, 200);
+      assert.equal(xlsx.headers["content-disposition"], `attachment; filename="resultados_${ID}.xlsx"`);
+      assert.equal((xlsx.body as Buffer).subarray(0, 2).toString(), "PK");
+      assert.equal(csv.statusCode, 200);
+      assert.equal(csv.headers["content-type"], "text/csv; charset=utf-8");
+      assert.equal(String(csv.body), "VARIEDAD,2026-02\r\n1111101,1.1\r\n");
+    });
+
+    it("answers 400 on a bad id or format, 404 for an unknown run and 409 for a failed one", async () => {
+      const failed = { ...calculos, findById: async () => ({ ...calculo, estado: "FALLIDO" }) };
+      const missing = { ...calculos, findById: async () => null };
+
+      const badId = await invoke(controller({ calculos }).resultados, { params: { id: "x" }, query: {} }, ANALISTA);
+      const badFormat = await invoke(
+        controller({ calculos }).resultados,
+        { params: { id: ID }, query: { formato: "pdf" } },
+        ANALISTA,
+      );
+      const notFound = await invoke(controller({ calculos: missing }).resultados, { params: { id: ID }, query: {} }, ANALISTA);
+      const conflict = await invoke(controller({ calculos: failed }).resultados, { params: { id: ID }, query: {} }, ANALISTA);
+
+      assert.equal(badId.statusCode, 400);
+      assert.equal(badFormat.statusCode, 400);
+      assert.equal(notFound.statusCode, 404);
+      assert.equal(conflict.statusCode, 409);
+    });
+  });
 });

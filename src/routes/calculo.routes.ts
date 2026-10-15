@@ -56,5 +56,6 @@ calculoRouter.get("/exportacion", canRun, controller.exportar);
 calculoRouter.get("/:id", canRead, controller.getById);
 calculoRouter.get("/:id/relativos", canRead, controller.relativos);
 calculoRouter.get("/:id/imputaciones", canRead, controller.imputaciones);
+calculoRouter.get("/:id/resultados", canRead, controller.resultados);
 
 export default calculoRouter;
