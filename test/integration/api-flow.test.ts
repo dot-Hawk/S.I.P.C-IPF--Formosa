@@ -524,6 +524,14 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     assert.equal(history.body[2].anterior, null);
     assert.equal((await api("GET", "/api/auditoria/precios", { token: a.token })).status, 403);
 
+    // The analista corrects too (but cannot delete: removal stays with the owner).
+    const byAnalista = await api("PATCH", `/api/precios/${state.precioId}`, {
+      token: state.analista.token,
+      body: { valor: 1250, oferta: true, observacion: "revisado" },
+    });
+    assert.equal(byAnalista.status, 200);
+    assert.equal((await api("DELETE", `/api/precios/${state.precioId}`, { token: state.analista.token })).status, 403);
+
     assert.equal((await api("GET", "/api/precios?oferta=true", { token: sup.token })).body.length, 1);
     assert.equal((await api("GET", "/api/precios?oferta=false", { token: sup.token })).body.length, 1);
 

@@ -396,6 +396,40 @@ describe("precio controller", () => {
       assert.equal((await invoke(c.remove, { params: { id: ID } }, ENCUESTADOR)).statusCode, 204);
     });
 
+    describe("analista correction", () => {
+      const other = { ...precio, encuestador: OTHER };
+
+      it("lets an analista correct another surveyor's precio even after the asignacion is COMPLETADA", async () => {
+        let args: unknown[] = [];
+        const c = controller({
+          precios: {
+            findById: async () => other,
+            update: async (...a: unknown[]) => {
+              args = a;
+              return { valor: 50 };
+            },
+          },
+          asignaciones: { hasEnCurso: async () => false },
+        });
+
+        const res = await invoke(c.update, { params: { id: ID }, body: { valor: 50 } }, ANALISTA);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(args, [ID, { valor: 50, alerta: null }, { userId: "an-1", role: "ANALISTA" }]);
+      });
+
+      it("is frozen once the relevamiento is CERRADO, and cannot delete", async () => {
+        const closed = controller({
+          precios: { findById: async () => other },
+          relevamientos: { findById: async () => ({ estado: "CERRADO" }) },
+        });
+        const owned = controller({ precios: { findById: async () => other } });
+
+        assert.equal((await invoke(closed.update, { params: { id: ID }, body: { valor: 50 } }, ANALISTA)).statusCode, 409);
+        assert.equal((await invoke(owned.remove, { params: { id: ID } }, ANALISTA)).statusCode, 404);
+      });
+    });
+
     describe("supervisor correction", () => {
       const other = { ...precio, encuestador: OTHER };
 

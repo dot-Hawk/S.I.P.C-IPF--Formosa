@@ -176,7 +176,7 @@ export function createPrecioController(repos: PrecioRepositories) {
     },
 
     async update(req: Request, res: Response): Promise<void> {
-      const loaded = await loadEditable(req, res, { allowSupervisor: true });
+      const loaded = await loadEditable(req, res, { allowReviewer: true });
       if (!loaded) return;
 
       const changes: PrecioChanges = {};

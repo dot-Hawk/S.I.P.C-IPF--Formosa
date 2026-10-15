@@ -52,13 +52,13 @@ export function createPrecioAccess(repos: PrecioAccessRepositories) {
   }
 
   // Editing or deleting. The owner may act while the relevamiento is open and the asignacion is
-  // still EN_CURSO. With `allowSupervisor`, a SUPERVISOR may act on any precio (also after the
-  // asignacion is COMPLETADA) but still only while the relevamiento is open, since closing
-  // freezes the data.
+  // still EN_CURSO. With `allowReviewer`, a SUPERVISOR or an ANALISTA may act on any precio (also
+  // after the asignacion is COMPLETADA) but still only while the relevamiento is open, since
+  // closing freezes the data.
   async function loadEditable(
     req: Request,
     res: Response,
-    { allowSupervisor = false, param = "id" } = {},
+    { allowReviewer = false, param = "id" } = {},
   ): Promise<{ precio: Precio; auth: AuthPayload; relevamiento: Relevamiento } | null> {
     const auth = getAuth(res);
     if (!auth) {
@@ -72,10 +72,10 @@ export function createPrecioAccess(repos: PrecioAccessRepositories) {
       return null;
     }
 
-    const asSupervisor = allowSupervisor && auth.role === "SUPERVISOR";
+    const asReviewer = allowReviewer && (auth.role === "SUPERVISOR" || auth.role === "ANALISTA");
 
     const precio = await repos.precios.findById(id);
-    if (!precio || (!asSupervisor && precio.encuestador !== auth.userId)) {
+    if (!precio || (!asReviewer && precio.encuestador !== auth.userId)) {
       res.status(404).json({ message: "Precio not found" });
       return null;
     }
@@ -86,7 +86,7 @@ export function createPrecioAccess(repos: PrecioAccessRepositories) {
       return null;
     }
 
-    if (asSupervisor) return { precio, auth, relevamiento };
+    if (asReviewer) return { precio, auth, relevamiento };
 
     if (!(await repos.asignaciones.hasEnCurso(precio.relevamiento, precio.comercio, auth.userId))) {
       res.status(409).json({ message: "The asignacion is no longer EN_CURSO" });
