@@ -696,6 +696,85 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     assert.equal((await login(draft.email, "reset-by-coordinator-1")).status, 200);
   });
 
+  it("never leaves the system without an active coordinador, even under concurrency", async () => {
+    const { coord } = state;
+    const { createUserRepository } = await import("../../src/repositories/user.repository.js");
+    const repo = createUserRepository((db as NonNullable<typeof db>).getDb());
+    const mk = async (n: number, role: string) => {
+      const draft = {
+        nombre: "Coord",
+        apellido: `Guard${n}`,
+        dni: `5000000${n}`,
+        legajo: `L-G${n}`,
+        email: `guard${n}@integration.test`,
+        password: PASSWORD,
+        role,
+      };
+      const created = await api("POST", "/api/users", { token: coord.token, body: draft });
+      assert.equal(created.status, 201);
+      return { id: created.body.id as string, email: draft.email };
+    };
+    const estado = (token: string, id: string, value: string) =>
+      api("PATCH", `/api/users/${id}/estado`, { token, body: { estado: value } });
+    const LAST = { message: "The system cannot be left without an active coordinador", code: "LAST_COORDINADOR" };
+
+    // The seeded coordinador is ACTIVO; a second one that is INACTIVO counts as zero.
+    const c2 = await mk(1, "COORDINADOR");
+    const other = await mk(2, "ENCUESTADOR");
+    assert.equal((await estado(coord.token, c2.id, "INACTIVO")).status, 200);
+
+    // Straight through the repository: the sole active coordinador cannot be demoted or deactivated.
+    await assert.rejects(repo.update(coord.id, { role: "ANALISTA" }), { name: "LastCoordinadorError" });
+    await assert.rejects(repo.update(coord.id, { estado: "LICENCIA" }), { name: "LastCoordinadorError" });
+    assert.equal((await repo.findById(coord.id))?.estado, "ACTIVO");
+
+    // Unaffected: other roles, names and activating.
+    assert.equal((await estado(coord.token, other.id, "INACTIVO")).status, 200);
+    assert.equal(
+      (await api("PATCH", `/api/users/${other.id}`, { token: coord.token, body: { role: "ANALISTA", nombre: "Otro" } })).status,
+      200,
+    );
+    assert.equal((await estado(coord.token, c2.id, "ACTIVO")).status, 200);
+
+    // Two active coordinadores: one may be demoted (and back), deactivated and reactivated.
+    const c2Token = (await login(c2.email, PASSWORD)).token;
+    assert.equal((await api("PATCH", `/api/users/${c2.id}`, { token: coord.token, body: { role: "ANALISTA" } })).status, 200);
+    assert.equal((await api("PATCH", `/api/users/${c2.id}`, { token: coord.token, body: { role: "COORDINADOR" } })).status, 200);
+    assert.equal((await estado(coord.token, c2.id, "LICENCIA")).status, 200);
+    assert.equal((await estado(coord.token, c2.id, "ACTIVO")).status, 200);
+
+    // Race through the API: each coordinador deactivates the other at the same time. Exactly one
+    // wins; the loser is refused with LAST_COORDINADOR, or with 401 when the winner's commit reached
+    // it before its own authentication (the actor is then already inactive).
+    const [r1, r2] = await Promise.all([
+      estado(coord.token, c2.id, "INACTIVO"),
+      estado(c2Token, coord.id, "INACTIVO"),
+    ]);
+    const [won, lost] = r1.status === 200 ? [r1, r2] : [r2, r1];
+    assert.equal(won.status, 200);
+    assert.ok(lost.status === 409 || lost.status === 401, `unexpected status ${lost.status}`);
+    if (lost.status === 409) assert.deepEqual(lost.body, LAST);
+    const survivorIsCoord = r1.status === 200;
+    const survivor = survivorIsCoord ? coord : { id: c2.id, token: c2Token };
+    const fallen = survivorIsCoord ? c2.id : coord.id;
+    const active = await api("GET", "/api/users?role=COORDINADOR&estado=ACTIVO", { token: survivor.token });
+    assert.deepEqual(active.body.map((u: { id: string }) => u.id), [survivor.id]);
+
+    // Same race at the repository, where the outcome is exact: one write, one LastCoordinadorError,
+    // for deactivations and for demotions, so the lock covers the check and the write together.
+    for (const change of [{ estado: "INACTIVO" as const }, { role: "ANALISTA" as const }]) {
+      assert.equal((await repo.update(fallen, { estado: "ACTIVO", role: "COORDINADOR" }))?.estado, "ACTIVO");
+      const results = await Promise.allSettled([repo.update(fallen, change), repo.update(survivor.id, change)]);
+      assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+      const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+      assert.equal(rejected.reason.name, "LastCoordinadorError");
+      assert.equal((await repo.count({ role: "COORDINADOR", estado: "ACTIVO" })), 1);
+    }
+
+    // Which coordinador survived is random: leave the seeded one active for the tests that follow.
+    await repo.update(coord.id, { role: "COORDINADOR", estado: "ACTIVO" });
+  });
+
   it("rate limits repeated failed logins without blocking other accounts", async () => {
     for (let i = 0; i < 5; i++) {
       assert.equal((await login("target@integration.test", "wrong")).status, 401);
