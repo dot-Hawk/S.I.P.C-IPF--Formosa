@@ -16,7 +16,7 @@ import { createPrecioAccess, getAuth } from "./precio-access.js";
 import { type AttachmentStorage } from "../storage/attachment-storage.js";
 import { isUniqueViolation } from "../utils/db-errors.js";
 import { isUuid } from "../utils/uuid.js";
-import { DEFAULT_PAGE_SIZE, validatePrecioFilters } from "../validators/precio.validator.js";
+import { DEFAULT_PAGE_SIZE, validatePrecioAnteriorQuery, validatePrecioFilters } from "../validators/precio.validator.js";
 
 export interface PrecioRepositories {
   precios: PrecioRepository;
@@ -151,6 +151,53 @@ export function createPrecioController(repos: PrecioRepositories) {
       const page = typeof req.query["page"] === "string" ? Number(req.query["page"]) : 1;
 
       res.json(await repos.precios.list(filter as PrecioFilter, { limit, offset: (page - 1) * limit }));
+    },
+
+    // The "previous price" the surveyor compares against. It does not depend on who loaded it, but a
+    // surveyor can only ask about a commerce they are assigned to in that relevamiento, so it cannot
+    // be used to browse the prices of the whole city.
+    async anterior(req: Request, res: Response): Promise<void> {
+      const auth = getAuth(res);
+      if (!auth) {
+        res.status(401).json({ message: "Authentication required" });
+        return;
+      }
+
+      const validation = validatePrecioAnteriorQuery(req.query);
+      if (!validation.valid) {
+        res.status(400).json({ errors: validation.errors });
+        return;
+      }
+
+      const relevamientoId = String(req.query["relevamiento"]);
+      const comercio = String(req.query["comercio"]);
+      const producto = String(req.query["producto"]);
+
+      const relevamiento = await repos.relevamientos.findById(relevamientoId);
+      if (!relevamiento) {
+        res.status(404).json({ message: "Relevamiento not found" });
+        return;
+      }
+
+      if (auth.role === "ENCUESTADOR") {
+        const assigned = await repos.asignaciones.list({
+          relevamiento: relevamientoId,
+          comercio,
+          encuestador: auth.userId,
+        });
+        if (assigned.length === 0) {
+          res.status(404).json({ message: "Asignacion not found" });
+          return;
+        }
+      }
+
+      const anterior = await repos.precios.anterior(producto, comercio, relevamiento.fechaInicio);
+      if (!anterior) {
+        res.status(204).end();
+        return;
+      }
+
+      res.json({ valor: anterior.valor, periodo: anterior.periodo, oferta: anterior.oferta });
     },
 
     async getById(req: Request, res: Response): Promise<void> {

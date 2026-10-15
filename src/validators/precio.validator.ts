@@ -101,6 +101,13 @@ export function validatePrecioUpdate(input: Record<string, unknown>): Validation
   return result(errors);
 }
 
+// The previous price is asked for one producto at one comercio, relative to a relevamiento.
+export function validatePrecioAnteriorQuery(query: Record<string, unknown>): ValidationResult {
+  const errors: ValidationError[] = [];
+  for (const field of ID_FIELDS) checkId(field, query[field], errors);
+  return result(errors);
+}
+
 export function validatePrecioFilters(query: Record<string, unknown>): ValidationResult {
   const errors: ValidationError[] = [];
 

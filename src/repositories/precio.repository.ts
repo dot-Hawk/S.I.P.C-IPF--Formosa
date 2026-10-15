@@ -26,6 +26,13 @@ export interface PrecioFilter {
   conAlerta?: boolean;
 }
 
+export interface PrecioAnterior {
+  valor: number;
+  oferta: boolean;
+  periodo: string;
+  fechaRelevamiento: Date;
+}
+
 export interface Page {
   limit: number;
   offset: number;
@@ -48,6 +55,9 @@ export interface PrecioRepository {
   // Prices of the same producto in the same commerce in earlier relevamientos, newest first.
   // Promotional prices are left out: they would distort what is normal.
   historial(producto: string, comercio: string, antesDe: Date, limit?: number): Promise<number[]>;
+  // The latest price of the producto at the comercio from a relevamiento that started before
+  // `antesDe`, whoever loaded it and promotional or not (it is what the surveyor sees as "previous").
+  anterior(producto: string, comercio: string, antesDe: Date): Promise<PrecioAnterior | null>;
   update(id: string, changes: PrecioChanges, actor: Actor): Promise<Precio | null>;
   remove(id: string, actor: Actor): Promise<Precio | null>;
 }
@@ -133,6 +143,28 @@ export function createPrecioRepository(db: Db): PrecioRepository {
         .orderBy(desc(relevamientos.fechaInicio))
         .limit(limit);
       return rows.map((r) => r.valor);
+    },
+
+    async anterior(producto, comercio, antesDe) {
+      const [row] = await db
+        .select({
+          valor: precios.valor,
+          oferta: precios.oferta,
+          periodo: relevamientos.periodo,
+          fechaRelevamiento: precios.fechaRelevamiento,
+        })
+        .from(precios)
+        .innerJoin(relevamientos, eq(precios.relevamiento, relevamientos.id))
+        .where(
+          and(
+            eq(precios.producto, producto),
+            eq(precios.comercio, comercio),
+            lt(relevamientos.fechaInicio, antesDe),
+          ),
+        )
+        .orderBy(desc(relevamientos.fechaInicio))
+        .limit(1);
+      return row ?? null;
     },
 
     async update(id, changes, actor) {

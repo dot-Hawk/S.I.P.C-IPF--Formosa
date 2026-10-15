@@ -500,4 +500,84 @@ describe("precio controller", () => {
       });
     });
   });
+
+  describe("anterior", () => {
+    const query = { relevamiento: ID, comercio: ID, producto: ID };
+    const previous = { valor: 1450.5, periodo: "2026-09", oferta: true, fechaRelevamiento: new Date("2026-09-12T12:00:00Z") };
+    const FECHA = new Date("2026-10-01T00:00:00Z");
+
+    it("answers the previous price before the relevamiento, whoever loaded it", async () => {
+      let args: unknown[] = [];
+      const c = controller({
+        relevamientos: { findById: async () => ({ id: ID, estado: "ABIERTO", fechaInicio: FECHA }) },
+        asignaciones: { list: async () => [{ id: "a1" }] },
+        precios: {
+          anterior: async (...a: unknown[]) => {
+            args = a;
+            return previous;
+          },
+        },
+      });
+
+      const res = await invoke(c.anterior, { query }, ENCUESTADOR);
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.body, { valor: 1450.5, periodo: "2026-09", oferta: true });
+      assert.deepEqual(args, [ID, ID, FECHA]);
+    });
+
+    it("answers 204 when there is no previous price", async () => {
+      const c = controller({
+        relevamientos: { findById: async () => ({ id: ID, fechaInicio: FECHA }) },
+        asignaciones: { list: async () => [{ id: "a1" }] },
+        precios: { anterior: async () => null },
+      });
+
+      const res = await invoke(c.anterior, { query }, ENCUESTADOR);
+
+      assert.equal(res.statusCode, 204);
+      assert.equal(res.ended, true);
+    });
+
+    it("lets a surveyor ask only for a commerce they are assigned to in that relevamiento", async () => {
+      let asked: unknown;
+      const c = controller({
+        relevamientos: { findById: async () => ({ id: ID, fechaInicio: FECHA }) },
+        asignaciones: {
+          list: async (filter: unknown) => {
+            asked = filter;
+            return [];
+          },
+        },
+        precios: { anterior: async () => previous },
+      });
+
+      const res = await invoke(c.anterior, { query }, ENCUESTADOR);
+
+      assert.equal(res.statusCode, 404);
+      assert.deepEqual(asked, { relevamiento: ID, comercio: ID, encuestador: ME });
+    });
+
+    it("does not restrict the other roles by assignment", async () => {
+      const c = controller({
+        relevamientos: { findById: async () => ({ id: ID, fechaInicio: FECHA }) },
+        asignaciones: {
+          list: async () => {
+            throw new Error("must not be consulted");
+          },
+        },
+        precios: { anterior: async () => previous },
+      });
+
+      assert.equal((await invoke(c.anterior, { query }, SUPERVISOR)).statusCode, 200);
+      assert.equal((await invoke(c.anterior, { query }, ANALISTA)).statusCode, 200);
+    });
+
+    it("answers 400 on an invalid query and 404 for an unknown relevamiento", async () => {
+      const missing = controller({ relevamientos: { findById: async () => null } });
+
+      assert.equal((await invoke(controller().anterior, { query: { comercio: ID } }, ENCUESTADOR)).statusCode, 400);
+      assert.equal((await invoke(missing.anterior, { query }, ENCUESTADOR)).statusCode, 404);
+    });
+  });
 });

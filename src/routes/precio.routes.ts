@@ -50,6 +50,8 @@ precioRouter.post(
   controller.create,
 );
 precioRouter.get("/", controller.list);
+// Before "/:id", which would take "anterior" for an id.
+precioRouter.get("/anterior", controller.anterior);
 precioRouter.get("/:id", controller.getById);
 precioRouter.patch(
   "/:id",

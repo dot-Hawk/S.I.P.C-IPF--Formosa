@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { validatePrecioCreate, validatePrecioFilters, validatePrecioUpdate } from "./precio.validator.js";
+import { validatePrecioAnteriorQuery, validatePrecioCreate, validatePrecioFilters, validatePrecioUpdate } from "./precio.validator.js";
 
 const ID = "00000000-0000-4000-8000-000000000011";
 const NOW = new Date("2026-10-14T12:00:00Z");
@@ -130,3 +130,12 @@ describe("confirmarDesvio and conAlerta", () => {
     assert.equal(validatePrecioFilters({ conAlerta: "false" }).valid, false);
   });
 });
+
+describe("validatePrecioAnteriorQuery", () => {
+  it("needs the relevamiento, the comercio and the producto, all valid ids", () => {
+    assert.equal(validatePrecioAnteriorQuery({ relevamiento: ID, comercio: ID, producto: ID }).valid, true);
+    assert.deepEqual(fields(validatePrecioAnteriorQuery({})).sort(), ["comercio", "producto", "relevamiento"]);
+    assert.deepEqual(fields(validatePrecioAnteriorQuery({ relevamiento: ID, comercio: "x", producto: ID })), ["comercio"]);
+  });
+});
+

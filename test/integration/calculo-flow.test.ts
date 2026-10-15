@@ -358,6 +358,52 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
     assert.equal(fromFile.relativos.filter((r) => r.valor !== null).length, stored.body.length);
   });
 
+  it("answers the previous price whoever loaded it, only for a commerce the surveyor is assigned to", async () => {
+    const { pool } = (db as NonNullable<typeof db>).getDbHandle();
+    const bcrypt = await import("bcryptjs");
+    const hash = await bcrypt.default.hash(PASSWORD, 4);
+
+    // A second surveyor: the prices of the fixture were all loaded by the first one.
+    await pool.query(
+      `INSERT INTO users (nombre, apellido, dni, legajo, email, password_hash, role, estado)
+       VALUES ('Otro', 'Encuestador', '39999999', 'T-9', 'otro@calc.test', $1, 'ENCUESTADOR', 'ACTIVO')`,
+      [hash],
+    );
+    const ids = async (sql: string) => (await pool.query(sql)).rows[0].id as string;
+    const otro = await ids("SELECT id FROM users WHERE email = 'otro@calc.test'");
+    const marzo = await ids("SELECT id FROM relevamientos WHERE periodo = '2026-03'");
+    const enero = await ids("SELECT id FROM relevamientos WHERE periodo = '2026-01'");
+    const almacen1 = await ids("SELECT id FROM comercios WHERE nombre = 'Almacen 1'");
+    const almacen2 = await ids("SELECT id FROM comercios WHERE nombre = 'Almacen 2'");
+    const producto = await ids("SELECT id FROM productos LIMIT 1");
+    await pool.query(
+      "INSERT INTO asignaciones (relevamiento_id, encuestador_id, comercio_id, estado) VALUES ($1, $2, $3, 'EN_CURSO')",
+      [marzo, otro, almacen1],
+    );
+    const login = await api("POST", "/api/auth/login", { body: { email: "otro@calc.test", password: PASSWORD } });
+    const token = login.body.token as string;
+
+    const ask = (who: string, relevamiento: string, comercio: string) =>
+      api("GET", `/api/precios/anterior?relevamiento=${relevamiento}&comercio=${comercio}&producto=${producto}`, {
+        token: who,
+      });
+
+    // February's 110 at Almacen 1 was loaded by the other surveyor.
+    const previous = await ask(token, marzo, almacen1);
+    assert.equal(previous.status, 200);
+    assert.deepEqual(previous.body, { valor: 110, periodo: "2026-02", oferta: false });
+
+    // Nothing before January, a commerce they are not assigned to is hidden, other roles are not restricted.
+    assert.equal((await ask(token, enero, almacen1)).status, 404);
+    assert.equal((await ask(token, marzo, almacen2)).status, 404);
+    assert.equal((await ask(tokens.analista, enero, almacen1)).status, 204);
+    const byAnalista = await ask(tokens.analista, marzo, almacen2);
+    assert.equal(byAnalista.status, 200);
+    assert.equal(byAnalista.body.valor, 100);
+    assert.equal((await api("GET", "/api/precios/anterior?comercio=x", { token })).status, 400);
+    assert.equal((await api("GET", "/api/precios/anterior")).status, 401);
+  });
+
   it("refuses to run while a relevamiento of the range is open", async () => {
     const { pool } = (db as NonNullable<typeof db>).getDbHandle();
     await pool.query("UPDATE relevamientos SET estado = 'ABIERTO' WHERE periodo = '2026-02'");
