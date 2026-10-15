@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import { type Request, type Response } from "express";
 import { type User } from "../db/schema.js";
 import { AUTH_LOCALS_KEY } from "../middlewares/authenticate.middleware.js";
-import { type UserChanges, type UserFilter, type UserRepository } from "../repositories/user.repository.js";
+import { LastCoordinadorError, type UserChanges, type UserFilter, type UserRepository } from "../repositories/user.repository.js";
 import { ERROR_CODES } from "../domain/error-codes.js";
 import { isUniqueViolation, uniqueViolationColumns } from "../utils/db-errors.js";
 import { isUuid } from "../utils/uuid.js";
@@ -40,6 +40,11 @@ function duplicateUserBody(error: unknown) {
       message: `A user with this ${field} already exists`,
     })),
   };
+}
+
+// The 409 of a change that would leave the system without an active coordinador.
+function lastCoordinadorBody() {
+  return { message: "The system cannot be left without an active coordinador", code: ERROR_CODES.LAST_COORDINADOR };
 }
 
 // Copies the given fields that are present, trimming strings; shared by create and update.
@@ -148,6 +153,10 @@ export function createUserController(users: UserRepository) {
         }
         res.json(toUserView(user));
       } catch (error) {
+        if (error instanceof LastCoordinadorError) {
+          res.status(409).json(lastCoordinadorBody());
+          return;
+        }
         if (isUniqueViolation(error)) {
           res.status(409).json(duplicateUserBody(error));
           return;
@@ -169,13 +178,21 @@ export function createUserController(users: UserRepository) {
         return;
       }
 
-      const user = await users.update(id, { estado: req.body.estado });
-      if (!user) {
-        res.status(404).json({ message: "User not found" });
-        return;
-      }
+      try {
+        const user = await users.update(id, { estado: req.body.estado });
+        if (!user) {
+          res.status(404).json({ message: "User not found" });
+          return;
+        }
 
-      res.json(toUserView(user));
+        res.json(toUserView(user));
+      } catch (error) {
+        if (error instanceof LastCoordinadorError) {
+          res.status(409).json(lastCoordinadorBody());
+          return;
+        }
+        throw error;
+      }
     },
 
     async resetPassword(req: Request, res: Response): Promise<void> {

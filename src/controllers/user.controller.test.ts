@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
-import { type UserRepository } from "../repositories/user.repository.js";
+import { LastCoordinadorError, type UserRepository } from "../repositories/user.repository.js";
 import { authLocals, invoke } from "../testing/http.js";
 import { ERROR_CODES } from "../domain/error-codes.js";
 import { createUserController } from "./user.controller.js";
@@ -264,6 +264,22 @@ describe("user controller management", () => {
       assert.equal(body.code, ERROR_CODES.USER_DUPLICATE);
       assert.deepEqual(body.errors.map((e) => e.field), ["legajo"]);
     });
+
+    it("answers 409 LAST_COORDINADOR when the change would leave no active coordinador", async () => {
+      const last = controller({
+        update: async () => {
+          throw new LastCoordinadorError();
+        },
+      });
+
+      const res = await invoke(last.update, { params: { id: TARGET }, body: { role: "ANALISTA" } }, COORD);
+
+      assert.equal(res.statusCode, 409);
+      assert.deepEqual(res.body, {
+        message: "The system cannot be left without an active coordinador",
+        code: ERROR_CODES.LAST_COORDINADOR,
+      });
+    });
   });
 
   describe("setEstado", () => {
@@ -288,6 +304,22 @@ describe("user controller management", () => {
 
       assert.equal(self.statusCode, 403);
       assert.equal(missing.statusCode, 404);
+    });
+
+    it("answers 409 LAST_COORDINADOR when deactivating the last active coordinador", async () => {
+      const last = controller({
+        update: async () => {
+          throw new LastCoordinadorError();
+        },
+      });
+
+      const res = await invoke(last.setEstado, { params: { id: TARGET }, body: { estado: "LICENCIA" } }, COORD);
+
+      assert.equal(res.statusCode, 409);
+      assert.deepEqual(res.body, {
+        message: "The system cannot be left without an active coordinador",
+        code: ERROR_CODES.LAST_COORDINADOR,
+      });
     });
   });
 

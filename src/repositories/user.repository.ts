@@ -13,6 +13,14 @@ export type UserChanges = Partial<
   Pick<NewUser, "nombre" | "apellido" | "dni" | "legajo" | "email" | "role" | "estado" | "passwordHash">
 >;
 
+// Thrown by `update` when the change would leave the system without an ACTIVO COORDINADOR.
+export class LastCoordinadorError extends Error {
+  constructor() {
+    super("The system cannot be left without an active coordinador");
+    this.name = "LastCoordinadorError";
+  }
+}
+
 export interface UserRepository {
   findById(id: string): Promise<User | null>;
   findByEmail(email: string): Promise<User | null>;
@@ -22,7 +30,8 @@ export interface UserRepository {
   list(filter: UserFilter, page: Page): Promise<User[]>;
   // Total of users matching the filter, regardless of the page.
   count(filter: UserFilter): Promise<number>;
-  // Null when the user does not exist.
+  // Null when the user does not exist. Throws LastCoordinadorError when the change would remove the
+  // last ACTIVO COORDINADOR.
   update(id: string, changes: UserChanges): Promise<User | null>;
 }
 
@@ -78,8 +87,30 @@ export function createUserRepository(db: Db): UserRepository {
     async update(id, changes) {
       if (Object.keys(changes).length === 0) return this.findById(id);
 
-      const [row] = await db.update(users).set(changes).where(eq(users.id, id)).returning();
-      return row ?? null;
+      const reducesCoordinadores =
+        (changes.role !== undefined && changes.role !== "COORDINADOR") ||
+        (changes.estado !== undefined && changes.estado !== "ACTIVO");
+      if (!reducesCoordinadores) {
+        const [row] = await db.update(users).set(changes).where(eq(users.id, id)).returning();
+        return row ?? null;
+      }
+
+      return db.transaction(async (tx) => {
+        // Locking every active coordinador (in id order, so two writers cannot deadlock) makes the
+        // count and the write one atomic step: a concurrent change waits here and then sees the
+        // committed state, so two coordinadores cannot deactivate each other at the same time.
+        const active = await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.role, "COORDINADOR"), eq(users.estado, "ACTIVO")))
+          .orderBy(asc(users.id))
+          .for("update");
+
+        if (active.length === 1 && active[0]?.id === id) throw new LastCoordinadorError();
+
+        const [row] = await tx.update(users).set(changes).where(eq(users.id, id)).returning();
+        return row ?? null;
+      });
     },
   };
 }
