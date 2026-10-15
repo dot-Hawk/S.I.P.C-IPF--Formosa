@@ -1,19 +1,11 @@
+import { type ValidationError, type ValidationResult } from "./validation.js";
+
 const FRECUENCIAS = ["QUINCENAL", "MENSUAL"] as const;
 
 const PERIODO_FORMAT = {
   MENSUAL: /^\d{4}-(0[1-9]|1[0-2])$/,
   QUINCENAL: /^\d{4}-(0[1-9]|1[0-2])-Q[12]$/,
 } as const;
-
-export interface ValidationError {
-  field: string;
-  message: string;
-}
-
-export interface ValidationResult {
-  valid: boolean;
-  errors: ValidationError[];
-}
 
 export function validateRelevamientoInput(input: Record<string, unknown>): ValidationResult {
   const errors: ValidationError[] = [];

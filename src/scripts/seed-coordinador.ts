@@ -4,14 +4,8 @@ import { seedCoordinador } from "../auth/seed-coordinador.service.js";
 import { connectDB } from "../config/database.js";
 import { User } from "../models/user.model.js";
 
-const CONNECTED = 1;
-
 async function main(): Promise<void> {
   await connectDB();
-
-  if (mongoose.connection.readyState !== CONNECTED) {
-    throw new Error("Could not connect to MongoDB; check MONGO_URI");
-  }
 
   const result = await seedCoordinador(User, {
     nombre: process.env["SEED_NOMBRE"],

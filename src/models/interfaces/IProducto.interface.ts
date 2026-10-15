@@ -1,7 +1,10 @@
 import { type Document } from "mongoose";
 
-type UnidadProducto = "KG" | "G" | "LT" | "ML" | "UNIDAD";
-type EstadoProducto = "ACTIVO" | "INACTIVO";
+export const UNIDADES_PRODUCTO = ["KG", "G", "LT", "ML", "UNIDAD"] as const;
+export const ESTADOS_PRODUCTO = ["ACTIVO", "INACTIVO"] as const;
+
+type UnidadProducto = (typeof UNIDADES_PRODUCTO)[number];
+type EstadoProducto = (typeof ESTADOS_PRODUCTO)[number];
 
 export interface IProducto extends Document {
   nombre: string;
