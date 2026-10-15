@@ -7,9 +7,10 @@ import { validateBody } from "../middlewares/validate-body.middleware.js";
 import { getDb } from "../db/index.js";
 import { createCanastaRepository } from "../repositories/canasta.repository.js";
 import { validateCanastaEstado, validateVariedadCreate } from "../validators/canasta.validator.js";
+import { createUserRepository } from "../repositories/user.repository.js";
 
 const controller = createCanastaController(createCanastaRepository(getDb()));
-const authenticate = createAuthenticate(getAuthConfig().secret);
+const authenticate = createAuthenticate(getAuthConfig().secret, createUserRepository(getDb()));
 
 const canastaRouter = Router();
 

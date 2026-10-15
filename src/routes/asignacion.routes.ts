@@ -22,7 +22,7 @@ const controller = createAsignacionController({
   users: createUserRepository(db),
   comercios: createComercioRepository(db),
 });
-const authenticate = createAuthenticate(getAuthConfig().secret);
+const authenticate = createAuthenticate(getAuthConfig().secret, createUserRepository(getDb()));
 
 const asignacionRouter = Router();
 

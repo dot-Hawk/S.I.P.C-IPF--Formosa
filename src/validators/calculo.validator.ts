@@ -68,6 +68,21 @@ export function validateCalculoCreate(input: Record<string, unknown>): Validatio
   return result(errors);
 }
 
+// The export comes as a query string, so the flag arrives as text.
+export function validateCalculoExportQuery(query: Record<string, unknown>): ValidationResult {
+  const { excluirOfertas, formato } = query;
+  const errors = validateCalculoCreate({ mesBase: query["mesBase"], mesObjetivo: query["mesObjetivo"] }).errors;
+
+  if (excluirOfertas !== undefined && excluirOfertas !== "true" && excluirOfertas !== "false") {
+    errors.push({ field: "excluirOfertas", message: "excluirOfertas must be true or false" });
+  }
+  if (formato !== undefined && formato !== "xlsx" && formato !== "csv") {
+    errors.push({ field: "formato", message: "formato must be xlsx or csv" });
+  }
+
+  return result(errors);
+}
+
 export function validateRelativosFilters(query: Record<string, unknown>): ValidationResult {
   const errors: ValidationError[] = [];
   const { variedad, mes } = query;

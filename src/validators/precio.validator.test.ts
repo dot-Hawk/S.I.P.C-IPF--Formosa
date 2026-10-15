@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { validatePrecioCreate, validatePrecioFilters, validatePrecioUpdate } from "./precio.validator.js";
+import { validatePrecioAnteriorQuery, validatePrecioCreate, validatePrecioFilters, validatePrecioUpdate } from "./precio.validator.js";
 
 const ID = "00000000-0000-4000-8000-000000000011";
 const NOW = new Date("2026-10-14T12:00:00Z");
@@ -65,6 +65,14 @@ describe("validatePrecioUpdate", () => {
   it("validates the fields present", () => {
     assert.deepEqual(fields(validatePrecioUpdate({ valor: -1 })), ["valor"]);
   });
+
+  it("lets an observacion be cleared with an empty string or null, but not misused", () => {
+    assert.equal(validatePrecioUpdate({ observacion: "" }).valid, true);
+    assert.equal(validatePrecioUpdate({ observacion: "   " }).valid, true);
+    assert.equal(validatePrecioUpdate({ observacion: null }).valid, true);
+    assert.deepEqual(fields(validatePrecioUpdate({ observacion: "x".repeat(501) })), ["observacion"]);
+    assert.deepEqual(fields(validatePrecioUpdate({ observacion: 5 })), ["observacion"]);
+  });
 });
 
 describe("validatePrecioFilters", () => {
@@ -102,3 +110,32 @@ describe("oferta", () => {
     assert.equal(validatePrecioFilters({ oferta: "yes" }).valid, false);
   });
 });
+
+describe("confirmarDesvio and conAlerta", () => {
+  const VALID = { relevamiento: ID, comercio: ID, producto: ID, valor: 100 };
+
+  it("accepts a boolean confirmarDesvio and rejects anything else", () => {
+    assert.equal(validatePrecioCreate({ ...VALID, confirmarDesvio: true }).valid, true);
+    assert.equal(validatePrecioCreate({ ...VALID, confirmarDesvio: "si" }).valid, false);
+    assert.equal(validatePrecioUpdate({ valor: 5, confirmarDesvio: false }).valid, true);
+    assert.equal(validatePrecioUpdate({ valor: 5, confirmarDesvio: 1 }).valid, false);
+  });
+
+  it("an update with only confirmarDesvio changes nothing, so it is rejected", () => {
+    assert.equal(validatePrecioUpdate({ confirmarDesvio: true }).valid, false);
+  });
+
+  it("accepts conAlerta only as true", () => {
+    assert.equal(validatePrecioFilters({ conAlerta: "true" }).valid, true);
+    assert.equal(validatePrecioFilters({ conAlerta: "false" }).valid, false);
+  });
+});
+
+describe("validatePrecioAnteriorQuery", () => {
+  it("needs the relevamiento, the comercio and the producto, all valid ids", () => {
+    assert.equal(validatePrecioAnteriorQuery({ relevamiento: ID, comercio: ID, producto: ID }).valid, true);
+    assert.deepEqual(fields(validatePrecioAnteriorQuery({})).sort(), ["comercio", "producto", "relevamiento"]);
+    assert.deepEqual(fields(validatePrecioAnteriorQuery({ relevamiento: ID, comercio: "x", producto: ID })), ["comercio"]);
+  });
+});
+

@@ -2,6 +2,9 @@ import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { type Server } from "node:http";
 import { type AddressInfo } from "node:net";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 // Integration test: boots the real Express app against a real PostgreSQL and walks the whole flow.
 //
@@ -66,6 +69,18 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     return { status: r.status, token: r.body?.token as string, id: r.body?.user?.id as string };
   }
 
+  let uploadsDir = "";
+
+  async function upload(precioId: string, token: string, data: Buffer, type = "image/jpeg"): Promise<ApiResponse> {
+    const response = await fetch(`${baseUrl}/api/precios/${precioId}/adjuntos`, {
+      method: "POST",
+      headers: { "content-type": type, authorization: `Bearer ${token}` },
+      body: new Uint8Array(data),
+    });
+    const text = await response.text();
+    return { status: response.status, body: text ? JSON.parse(text) : undefined };
+  }
+
   const state = {} as {
     coord: { token: string; id: string };
     a: { token: string; id: string };
@@ -82,6 +97,8 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
   before(async () => {
     process.env["JWT_SECRET"] = "integration-test-secret";
     process.env["DATABASE_URL"] = DATABASE_TEST_URL as string;
+    uploadsDir = await mkdtemp(path.join(os.tmpdir(), "sipc-uploads-"));
+    process.env["UPLOADS_DIR"] = uploadsDir;
 
     const dbModule = await import("../../src/db/index.js");
     db = dbModule;
@@ -141,6 +158,7 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
       await resetSchema();
       await db.closeDb();
     }
+    if (uploadsDir) await rm(uploadsDir, { recursive: true, force: true });
   });
 
   it("seed is idempotent", async () => {
@@ -401,6 +419,16 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
 
     const edited = await api("PATCH", `/api/precios/${state.precioId}`, { token: a.token, body: { valor: 1300 } });
     assert.equal(edited.body.valor, 1300);
+
+    // The observacion can be set and then cleared (the surveyor app sends an empty string).
+    const noted = await api("PATCH", `/api/precios/${state.precioId}`, {
+      token: a.token,
+      body: { observacion: "  marca distinta  " },
+    });
+    assert.equal(noted.body.observacion, "marca distinta");
+    const cleared = await api("PATCH", `/api/precios/${state.precioId}`, { token: a.token, body: { observacion: "" } });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.observacion, null);
     assert.equal(
       (await api("PATCH", `/api/precios/${state.precioId}`, { token: b.token, body: { valor: 1 } })).status,
       404,
@@ -414,6 +442,48 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     assert.equal(byRelevamiento.body.length, 2);
     assert.equal((await api("GET", "/api/precios?limit=1", { token: analista.token })).body.length, 1);
     assert.equal((await api("GET", "/api/precios?limit=9999", { token: analista.token })).status, 400);
+  });
+
+  it("attaches receipts to a precio with validation, ownership and audit", async () => {
+    const { coord, a, b, analista } = state;
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), Buffer.from("JFIF-receipt")]);
+
+    const created = await upload(state.precioId, a.token, jpeg);
+    assert.equal(created.status, 201);
+    assert.equal(created.body.mime, "image/jpeg");
+    assert.equal(created.body.bytes, jpeg.length);
+    assert.equal(created.body.clave, undefined);
+    const adjuntoUrl = `/api/precios/${state.precioId}/adjuntos/${created.body.id}`;
+
+    assert.equal((await upload(state.precioId, b.token, jpeg)).status, 404);
+    assert.equal((await upload(state.precioId, coord.token, jpeg)).status, 403);
+    assert.equal((await upload(state.precioId, a.token, Buffer.from("<script>1</script>"))).status, 415);
+    assert.equal((await upload(state.precioId, a.token, Buffer.alloc(6 * 1024 * 1024, 0xff))).status, 413);
+
+    assert.equal((await api("GET", `/api/precios/${state.precioId}/adjuntos`, { token: a.token })).body.length, 1);
+    assert.equal((await api("GET", `/api/precios/${state.precioId}/adjuntos`, { token: b.token })).status, 404);
+
+    const download = await fetch(`${baseUrl}${adjuntoUrl}`, { headers: { authorization: `Bearer ${analista.token}` } });
+    assert.equal(download.status, 200);
+    assert.equal(download.headers.get("content-type"), "image/jpeg");
+    assert.equal(download.headers.get("x-content-type-options"), "nosniff");
+    assert.deepEqual(Buffer.from(await download.arrayBuffer()), jpeg);
+    assert.equal((await readdir(uploadsDir)).length, 1);
+
+    assert.equal((await api("DELETE", adjuntoUrl, { token: b.token })).status, 404);
+    assert.equal((await api("DELETE", adjuntoUrl, { token: a.token })).status, 204);
+    assert.equal((await api("GET", adjuntoUrl, { token: a.token })).status, 404);
+    assert.deepEqual(await readdir(uploadsDir), []);
+
+    const history = await api("GET", `/api/auditoria/precios?precio=${state.precioId}`, { token: analista.token });
+    const attachmentEvents = history.body.filter((e: { accion: string }) => e.accion.startsWith("ADJUNTO_"));
+    assert.deepEqual(
+      attachmentEvents.map((e: { accion: string }) => e.accion),
+      ["ADJUNTO_ELIMINADO", "ADJUNTO_AGREGADO"],
+    );
+    assert.equal(attachmentEvents[1].detalle.adjunto, created.body.id);
+    assert.equal(attachmentEvents[1].detalle.bytes, jpeg.length);
+    assert.equal(attachmentEvents[1].usuario, a.id);
   });
 
   it("freezes data after completion and closing", async () => {
@@ -449,16 +519,31 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     assert.equal(corrected.status, 200);
     assert.equal(corrected.body.oferta, true);
 
-    const history = await api("GET", `/api/auditoria/precios?precio=${state.precioId}`, { token: sup.token });
+    const full = await api("GET", `/api/auditoria/precios?precio=${state.precioId}`, { token: sup.token });
+    // Attachment events are covered by their own test; here only changes to the price itself.
+    const history = {
+      body: full.body.filter((entry: { accion: string }) => !entry.accion.startsWith("ADJUNTO_")),
+    };
     assert.deepEqual(
       history.body.map((entry: { accion: string }) => entry.accion),
-      ["MODIFICACION", "MODIFICACION", "CREACION"],
+      // newest first: supervisor correction, observacion cleared, observacion set, valor edit, creation
+      ["MODIFICACION", "MODIFICACION", "MODIFICACION", "MODIFICACION", "CREACION"],
     );
     assert.equal(history.body[0].rol, "SUPERVISOR");
     assert.equal(history.body[0].anterior.valor, 1300);
     assert.equal(history.body[0].posterior.valor, 1250);
-    assert.equal(history.body[2].anterior, null);
+    assert.equal(history.body[1].anterior.observacion, "marca distinta");
+    assert.equal(history.body[1].posterior.observacion, null);
+    assert.equal(history.body[4].anterior, null);
     assert.equal((await api("GET", "/api/auditoria/precios", { token: a.token })).status, 403);
+
+    // The analista corrects too (but cannot delete: removal stays with the owner).
+    const byAnalista = await api("PATCH", `/api/precios/${state.precioId}`, {
+      token: state.analista.token,
+      body: { valor: 1250, oferta: true, observacion: "revisado" },
+    });
+    assert.equal(byAnalista.status, 200);
+    assert.equal((await api("DELETE", `/api/precios/${state.precioId}`, { token: state.analista.token })).status, 403);
 
     assert.equal((await api("GET", "/api/precios?oferta=true", { token: sup.token })).body.length, 1);
     assert.equal((await api("GET", "/api/precios?oferta=false", { token: sup.token })).body.length, 1);
@@ -475,6 +560,85 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     assert.equal(lateAssignment.status, 409);
     const missing = await api("PATCH", "/api/relevamientos/00000000-0000-4000-8000-000000000099/cerrar", { token: coord.token });
     assert.equal(missing.status, 404);
+  });
+
+  it("manages users: estado and role apply immediately, passwords can be changed and reset", async () => {
+    const { coord } = state;
+    const draft = {
+      nombre: "Temp",
+      apellido: "Usuario",
+      dni: "40000001",
+      legajo: "L-Temp",
+      email: "temp@integration.test",
+      password: PASSWORD,
+      role: "ENCUESTADOR",
+    };
+    const created = await api("POST", "/api/users", { token: coord.token, body: draft });
+    assert.equal(created.status, 201);
+    const tempId = created.body.id as string;
+    const temp = await login(draft.email, PASSWORD);
+
+    const me = await api("GET", "/api/auth/me", { token: temp.token });
+    assert.equal(me.status, 200);
+    assert.equal(me.body.email, draft.email);
+    assert.equal(me.body.passwordHash, undefined);
+
+    // Listing and reading are for the coordinator; the hash never leaves.
+    const list = await api("GET", "/api/users?role=ENCUESTADOR&estado=ACTIVO&limit=50", { token: coord.token });
+    assert.equal(list.status, 200);
+    assert.ok(list.body.some((u: { id: string }) => u.id === tempId));
+    assert.ok(list.body.every((u: { passwordHash?: string }) => u.passwordHash === undefined));
+    assert.equal((await api("GET", "/api/users", { token: temp.token })).status, 403);
+    assert.equal((await api("GET", "/api/users?role=ROOT", { token: coord.token })).status, 400);
+
+    // A role change applies to the token already issued.
+    assert.equal((await api("GET", "/api/calculos", { token: temp.token })).status, 403);
+    const promoted = await api("PATCH", `/api/users/${tempId}`, { token: coord.token, body: { role: "ANALISTA" } });
+    assert.equal(promoted.status, 200);
+    assert.equal((await api("GET", "/api/calculos", { token: temp.token })).status, 200);
+
+    // Duplicates are refused and the coordinator cannot lock themselves out.
+    assert.equal(
+      (await api("PATCH", `/api/users/${tempId}`, { token: coord.token, body: { dni: "10000001" } })).status,
+      409,
+    );
+    assert.equal(
+      (await api("PATCH", `/api/users/${coord.id}`, { token: coord.token, body: { role: "ANALISTA" } })).status,
+      403,
+    );
+    assert.equal(
+      (await api("PATCH", `/api/users/${coord.id}/estado`, { token: coord.token, body: { estado: "INACTIVO" } })).status,
+      403,
+    );
+
+    // Deactivating cuts the session at once, and reactivating gives access back.
+    const off = await api("PATCH", `/api/users/${tempId}/estado`, { token: coord.token, body: { estado: "INACTIVO" } });
+    assert.equal(off.body.estado, "INACTIVO");
+    assert.equal((await api("GET", "/api/auth/me", { token: temp.token })).status, 401);
+    assert.equal((await login(draft.email, PASSWORD)).status, 401);
+    await api("PATCH", `/api/users/${tempId}/estado`, { token: coord.token, body: { estado: "ACTIVO" } });
+    assert.equal((await api("GET", "/api/auth/me", { token: temp.token })).status, 200);
+
+    // Own password change needs the current one; the coordinator can reset it.
+    const wrong = await api("POST", "/api/auth/password", {
+      token: temp.token,
+      body: { currentPassword: "nope-nope", newPassword: "another-password-1" },
+    });
+    assert.equal(wrong.status, 400);
+    const changed = await api("POST", "/api/auth/password", {
+      token: temp.token,
+      body: { currentPassword: PASSWORD, newPassword: "another-password-1" },
+    });
+    assert.equal(changed.status, 204);
+    assert.equal((await login(draft.email, PASSWORD)).status, 401);
+    assert.equal((await login(draft.email, "another-password-1")).status, 200);
+
+    const reset = await api("PUT", `/api/users/${tempId}/password`, {
+      token: coord.token,
+      body: { password: "reset-by-coordinator-1" },
+    });
+    assert.equal(reset.status, 204);
+    assert.equal((await login(draft.email, "reset-by-coordinator-1")).status, 200);
   });
 
   it("rate limits repeated failed logins without blocking other accounts", async () => {

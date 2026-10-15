@@ -30,6 +30,18 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
   let baseUrl: string;
   let db: typeof import("../../src/db/index.js") | undefined;
   const tokens = {} as { coord: string; analista: string; encuestador: string };
+  // Starts a run (202, EJECUTANDO) and waits until the background job ends it.
+  async function runCalculo(token: string, body: unknown) {
+    const started = await api("POST", "/api/calculos", { token, body });
+    if (started.status !== 202) return started;
+
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const current = await api("GET", `/api/calculos/${started.body.id}`, { token });
+      if (current.body.estado !== "EJECUTANDO") return { status: 202, body: current.body, startedAs: started.body };
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error("The run did not finish in time");
+  }
   let calculoId: string;
 
   async function api(method: string, path: string, options: { token?: string; body?: unknown } = {}) {
@@ -204,12 +216,10 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
   });
 
   it("runs the engine over closed relevamientos, imputes and stores the results", async () => {
-    const created = await api("POST", "/api/calculos", {
-      token: tokens.analista,
-      body: { mesBase: "2026-01", mesObjetivo: "2026-03" },
-    });
+    const created = await runCalculo(tokens.analista, { mesBase: "2026-01", mesObjetivo: "2026-03" });
 
-    assert.equal(created.status, 201);
+    assert.equal(created.status, 202);
+    assert.equal((created as { startedAs: { estado: string } }).startedAs.estado, "EJECUTANDO");
     assert.equal(created.body.estado, "COMPLETADO");
     assert.equal(created.body.motorVersion.length > 0, true);
     assert.equal(created.body.resumen.imputaciones, 1);
@@ -258,19 +268,140 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
     const { pool } = (db as NonNullable<typeof db>).getDbHandle();
     await pool.query("UPDATE precios SET oferta = true WHERE valor = 132");
 
-    const withOffers = await api("POST", "/api/calculos", {
-      token: tokens.coord,
-      body: { mesBase: "2026-01", mesObjetivo: "2026-03" },
-    });
-    const withoutOffers = await api("POST", "/api/calculos", {
-      token: tokens.coord,
-      body: { mesBase: "2026-01", mesObjetivo: "2026-03", excluirOfertas: true },
+    const withOffers = await runCalculo(tokens.coord, { mesBase: "2026-01", mesObjetivo: "2026-03" });
+    const withoutOffers = await runCalculo(tokens.coord, {
+      mesBase: "2026-01",
+      mesObjetivo: "2026-03",
+      excluirOfertas: true,
     });
 
-    assert.equal(withOffers.status, 201);
-    assert.equal(withoutOffers.status, 201);
+    assert.equal(withOffers.body.estado, "COMPLETADO");
+    assert.equal(withoutOffers.body.estado, "COMPLETADO");
     assert.notEqual(withOffers.body.entradaHash, withoutOffers.body.entradaHash);
     assert.equal(withoutOffers.body.excluirOfertas, true);
+  });
+
+  it("runs one calculation at a time and frees a run that was abandoned", async () => {
+    const { pool } = (db as NonNullable<typeof db>).getDbHandle();
+    const body = { mesBase: "2026-01", mesObjetivo: "2026-03" };
+
+    // A run that is still executing blocks a new one...
+    await pool.query(
+      `INSERT INTO calculos (mes_base, mes_objetivo, parametros, entrada_hash, estado, creado_por)
+       SELECT '2026-01', '2026-03', '{}'::jsonb, 'stuck', 'EJECUTANDO', id FROM users LIMIT 1`,
+    );
+    const busy = await api("POST", "/api/calculos", { token: tokens.analista, body });
+    assert.equal(busy.status, 409);
+    assert.match(busy.body.message, /en ejecución/);
+
+    // ...but one that has been "running" for far too long was abandoned (crash, restart).
+    await pool.query("UPDATE calculos SET created_at = now() - interval '1 hour' WHERE entrada_hash = 'stuck'");
+    const freed = await runCalculo(tokens.analista, body);
+    assert.equal(freed.body.estado, "COMPLETADO");
+
+    const stuck = await pool.query("SELECT estado, error FROM calculos WHERE entrada_hash = 'stuck'");
+    assert.equal(stuck.rows[0].estado, "FALLIDO");
+    assert.match(stuck.rows[0].error, /interrupted/);
+  });
+
+  it("downloads the planilla of a run for every reading role", async () => {
+    const url = `${baseUrl}/api/calculos/${calculoId}/resultados`;
+
+    const csv = await fetch(`${url}?formato=csv`, { headers: { authorization: `Bearer ${tokens.coord}` } });
+    assert.equal(csv.status, 200);
+    const lines = (await csv.text()).trim().split("\r\n");
+    assert.equal(lines[0], "VARIEDAD,2026-02,2026-03");
+    assert.equal(lines.length, 1 + new Set((await api("GET", `/api/calculos/${calculoId}/relativos`, { token: tokens.coord })).body.map((r: { variedad: string }) => r.variedad)).size);
+
+    const xlsx = await fetch(url, { headers: { authorization: `Bearer ${tokens.analista}` } });
+    assert.equal(xlsx.status, 200);
+    assert.equal((await xlsx.arrayBuffer()).byteLength > 0, true);
+
+    assert.equal((await fetch(url, { headers: { authorization: `Bearer ${tokens.encuestador}` } })).status, 403);
+  });
+
+  it("exports the engine input as a file the engine accepts, with the same result as the run", async () => {
+    const query = "mesBase=2026-01&mesObjetivo=2026-03";
+    const url = (formato: string) => `${baseUrl}/api/calculos/exportacion?${query}&formato=${formato}`;
+    const headers = (token: string) => ({ authorization: `Bearer ${token}` });
+
+    assert.equal((await fetch(url("xlsx"), { headers: headers(tokens.encuestador) })).status, 403);
+
+    const csv = await fetch(url("csv"), { headers: headers(tokens.analista) });
+    assert.equal(csv.status, 200);
+    const lines = (await csv.text()).trim().split("\r\n");
+    assert.equal(lines[0], "VARIEDAD,INFORMANTE,TIPO,MES,PRECIO");
+    assert.ok(lines.length > 1);
+
+    const xlsx = await fetch(url("xlsx"), { headers: headers(tokens.analista) });
+    assert.equal(xlsx.status, 200);
+    const file = await xlsx.arrayBuffer();
+
+    const form = new FormData();
+    form.set("file", new Blob([file]), "precios.xlsx");
+    form.set("mesBase", "2026-01");
+    form.set("mesObjetivo", "2026-03");
+    const engineResponse = await fetch(`${ENGINE_TEST_URL}/v1/calculo/excel`, {
+      method: "POST",
+      headers: { "x-api-key": ENGINE_TEST_API_KEY as string },
+      body: form,
+    });
+    assert.equal(engineResponse.status, 200);
+    const fromFile = (await engineResponse.json()) as { relativos: { variedad: string; mes: string; valor: number }[] };
+
+    const stored = await api("GET", `/api/calculos/${calculoId}/relativos`, { token: tokens.analista });
+    const key = (r: { variedad: string; mes: string }) => `${r.variedad}|${r.mes}`;
+    const expected = new Map<string, number>(stored.body.map((r: { variedad: string; mes: string; valor: number }) => [key(r), r.valor]));
+    for (const relativo of fromFile.relativos.filter((r) => r.valor !== null)) {
+      assert.ok(Math.abs((expected.get(key(relativo)) ?? NaN) - relativo.valor) < 1e-9);
+    }
+    assert.equal(fromFile.relativos.filter((r) => r.valor !== null).length, stored.body.length);
+  });
+
+  it("answers the previous price whoever loaded it, only for a commerce the surveyor is assigned to", async () => {
+    const { pool } = (db as NonNullable<typeof db>).getDbHandle();
+    const bcrypt = await import("bcryptjs");
+    const hash = await bcrypt.default.hash(PASSWORD, 4);
+
+    // A second surveyor: the prices of the fixture were all loaded by the first one.
+    await pool.query(
+      `INSERT INTO users (nombre, apellido, dni, legajo, email, password_hash, role, estado)
+       VALUES ('Otro', 'Encuestador', '39999999', 'T-9', 'otro@calc.test', $1, 'ENCUESTADOR', 'ACTIVO')`,
+      [hash],
+    );
+    const ids = async (sql: string) => (await pool.query(sql)).rows[0].id as string;
+    const otro = await ids("SELECT id FROM users WHERE email = 'otro@calc.test'");
+    const marzo = await ids("SELECT id FROM relevamientos WHERE periodo = '2026-03'");
+    const enero = await ids("SELECT id FROM relevamientos WHERE periodo = '2026-01'");
+    const almacen1 = await ids("SELECT id FROM comercios WHERE nombre = 'Almacen 1'");
+    const almacen2 = await ids("SELECT id FROM comercios WHERE nombre = 'Almacen 2'");
+    const producto = await ids("SELECT id FROM productos LIMIT 1");
+    await pool.query(
+      "INSERT INTO asignaciones (relevamiento_id, encuestador_id, comercio_id, estado) VALUES ($1, $2, $3, 'EN_CURSO')",
+      [marzo, otro, almacen1],
+    );
+    const login = await api("POST", "/api/auth/login", { body: { email: "otro@calc.test", password: PASSWORD } });
+    const token = login.body.token as string;
+
+    const ask = (who: string, relevamiento: string, comercio: string) =>
+      api("GET", `/api/precios/anterior?relevamiento=${relevamiento}&comercio=${comercio}&producto=${producto}`, {
+        token: who,
+      });
+
+    // February's 110 at Almacen 1 was loaded by the other surveyor.
+    const previous = await ask(token, marzo, almacen1);
+    assert.equal(previous.status, 200);
+    assert.deepEqual(previous.body, { valor: 110, periodo: "2026-02", oferta: false });
+
+    // Nothing before January, a commerce they are not assigned to is hidden, other roles are not restricted.
+    assert.equal((await ask(token, enero, almacen1)).status, 404);
+    assert.equal((await ask(token, marzo, almacen2)).status, 404);
+    assert.equal((await ask(tokens.analista, enero, almacen1)).status, 204);
+    const byAnalista = await ask(tokens.analista, marzo, almacen2);
+    assert.equal(byAnalista.status, 200);
+    assert.equal(byAnalista.body.valor, 100);
+    assert.equal((await api("GET", "/api/precios/anterior?comercio=x", { token })).status, 400);
+    assert.equal((await api("GET", "/api/precios/anterior")).status, 401);
   });
 
   it("refuses to run while a relevamiento of the range is open", async () => {
@@ -284,5 +415,58 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
 
     assert.equal(res.status, 409);
     assert.match(res.body.message, /2026-02/);
+  });
+
+  it("warns when a new price is far from the history of the producto in that commerce", async () => {
+    const { pool } = (db as NonNullable<typeof db>).getDbHandle();
+    await pool.query("UPDATE relevamientos SET estado = 'CERRADO'");
+    // An earlier test marked a price as a promotion, and promotions are not part of the history.
+    await pool.query("UPDATE precios SET oferta = false");
+
+    const rel = await pool.query(
+      `INSERT INTO relevamientos (periodo, frecuencia, fecha_inicio, fecha_limite, estado)
+       VALUES ('2026-04', 'MENSUAL', '2026-04-01', '2026-04-28', 'ABIERTO') RETURNING id`,
+    );
+    const comercio = await pool.query("SELECT id FROM comercios WHERE nombre = 'Almacen 1'");
+    const encuestador = await pool.query("SELECT id FROM users WHERE role = 'ENCUESTADOR'");
+    const producto = await pool.query("SELECT id FROM productos LIMIT 1");
+    await pool.query(
+      `INSERT INTO asignaciones (relevamiento_id, encuestador_id, comercio_id, estado)
+       VALUES ($1, $2, $3, 'EN_CURSO')`,
+      [rel.rows[0].id, encuestador.rows[0].id, comercio.rows[0].id],
+    );
+
+    const body = {
+      relevamiento: rel.rows[0].id,
+      comercio: comercio.rows[0].id,
+      producto: producto.rows[0].id,
+      valor: 5000,
+    };
+
+    // History of this producto at Almacen 1: 100, 110, 132.
+    const warned = await api("POST", "/api/precios", { token: tokens.encuestador, body });
+    assert.equal(warned.status, 409);
+    assert.equal(warned.body.requiereConfirmacion, true);
+    assert.equal(warned.body.alerta.n, 3);
+    assert.ok(Math.abs(warned.body.alerta.media - 114) < 1e-9);
+
+    const confirmed = await api("POST", "/api/precios", {
+      token: tokens.encuestador,
+      body: { ...body, confirmarDesvio: true },
+    });
+    assert.equal(confirmed.status, 201);
+    assert.equal(confirmed.body.alerta.n, 3);
+
+    const flagged = await api("GET", "/api/precios?conAlerta=true", { token: tokens.analista });
+    assert.equal(flagged.body.length, 1);
+    assert.equal(flagged.body[0].id, confirmed.body.id);
+
+    // A usual value on a new price is saved without any alert.
+    const usual = await api("PATCH", `/api/precios/${confirmed.body.id}`, {
+      token: tokens.encuestador,
+      body: { valor: 120 },
+    });
+    assert.equal(usual.status, 200);
+    assert.equal(usual.body.alerta, null);
   });
 });

@@ -35,9 +35,26 @@ function checkObservacion(value: unknown, errors: ValidationError[]): void {
   }
 }
 
+// On an update the observacion can be cleared: an empty/blank string or null removes it.
+function checkObservacionUpdate(value: unknown, errors: ValidationError[]): void {
+  if (value === null) return;
+  if (typeof value !== "string" || value.length > MAX_OBSERVACION_LENGTH) {
+    errors.push({
+      field: "observacion",
+      message: `observacion must be a string of at most ${MAX_OBSERVACION_LENGTH} characters, or null to clear it`,
+    });
+  }
+}
+
 function checkOferta(value: unknown, errors: ValidationError[]): void {
   if (typeof value !== "boolean") {
     errors.push({ field: "oferta", message: "oferta must be a boolean" });
+  }
+}
+
+function checkConfirmarDesvio(value: unknown, errors: ValidationError[]): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    errors.push({ field: "confirmarDesvio", message: "confirmarDesvio must be a boolean" });
   }
 }
 
@@ -64,6 +81,7 @@ export function validatePrecioCreate(
   if (input["fechaRelevamiento"] !== undefined) checkFecha(input["fechaRelevamiento"], now, errors);
   if (input["observacion"] !== undefined) checkObservacion(input["observacion"], errors);
   if (input["oferta"] !== undefined) checkOferta(input["oferta"], errors);
+  checkConfirmarDesvio(input["confirmarDesvio"], errors);
 
   return result(errors);
 }
@@ -76,9 +94,17 @@ export function validatePrecioUpdate(input: Record<string, unknown>): Validation
     errors.push({ field: "body", message: "at least one of: valor, observacion, oferta is required" });
   }
   if (valor !== undefined) checkValor(valor, errors);
-  if (observacion !== undefined) checkObservacion(observacion, errors);
+  if (observacion !== undefined) checkObservacionUpdate(observacion, errors);
   if (oferta !== undefined) checkOferta(oferta, errors);
+  checkConfirmarDesvio(input["confirmarDesvio"], errors);
 
+  return result(errors);
+}
+
+// The previous price is asked for one producto at one comercio, relative to a relevamiento.
+export function validatePrecioAnteriorQuery(query: Record<string, unknown>): ValidationResult {
+  const errors: ValidationError[] = [];
+  for (const field of ID_FIELDS) checkId(field, query[field], errors);
   return result(errors);
 }
 
@@ -89,9 +115,12 @@ export function validatePrecioFilters(query: Record<string, unknown>): Validatio
     if (query[field] !== undefined) checkId(field, query[field], errors);
   }
 
-  const { page, limit, oferta } = query;
+  const { page, limit, oferta, conAlerta } = query;
   if (oferta !== undefined && oferta !== "true" && oferta !== "false") {
     errors.push({ field: "oferta", message: "oferta must be true or false" });
+  }
+  if (conAlerta !== undefined && conAlerta !== "true") {
+    errors.push({ field: "conAlerta", message: "conAlerta must be true" });
   }
   if (page !== undefined && !(typeof page === "string" && POSITIVE_INTEGER.test(page))) {
     errors.push({ field: "page", message: "page must be a positive integer" });

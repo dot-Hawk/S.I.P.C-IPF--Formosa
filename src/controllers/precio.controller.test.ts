@@ -1,5 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { type AttachmentStorage } from "../storage/attachment-storage.js";
+import { type AdjuntoRepository } from "../repositories/adjunto.repository.js";
 import { type AsignacionRepository } from "../repositories/asignacion.repository.js";
 import { type PrecioRepository } from "../repositories/precio.repository.js";
 import { type ProductoRepository } from "../repositories/producto.repository.js";
@@ -20,15 +22,20 @@ interface Repos {
   relevamientos: object;
   asignaciones: object;
   productos: object;
+  adjuntos: object;
+  storage: object;
 }
 
 function controller(overrides: Partial<Repos> = {}) {
   const repos: Repos = {
-    precios: {},
     relevamientos: { findById: async () => ({ estado: "ABIERTO", fechaInicio: FECHA_INICIO }) },
     asignaciones: { hasEnCurso: async () => true },
     productos: { findById: async () => ({ estado: "ACTIVO" }) },
+    adjuntos: { listByPrecio: async () => [] },
+    storage: { remove: async () => undefined },
     ...overrides,
+    // Without history nothing is judged, unless a test provides one.
+    precios: { historial: async () => [], ...overrides.precios },
   };
 
   return createPrecioController({
@@ -36,6 +43,8 @@ function controller(overrides: Partial<Repos> = {}) {
     relevamientos: repos.relevamientos as RelevamientoRepository,
     asignaciones: repos.asignaciones as AsignacionRepository,
     productos: repos.productos as ProductoRepository,
+    adjuntos: repos.adjuntos as AdjuntoRepository,
+    storage: repos.storage as AttachmentStorage,
   });
 }
 
@@ -83,6 +92,83 @@ describe("precio controller", () => {
 
       assert.equal(received[0]?.["oferta"], false);
       assert.equal(received[1]?.["oferta"], true);
+    });
+
+    describe("deviation warning", () => {
+      const history = [100, 104, 98, 102, 101];
+      const withHistory = (extra: object = {}) =>
+        controller({ precios: { historial: async () => history, create: async (d: object) => d, ...extra } });
+
+      it("asks for confirmation when the price is far from its history, and does not save it", async () => {
+        let created = false;
+        const c = withHistory({
+          create: async () => {
+            created = true;
+          },
+        });
+
+        const res = await invoke(c.create, { body: { ...body, valor: 500 } }, ENCUESTADOR);
+
+        assert.equal(res.statusCode, 409);
+        const payload = res.body as { requiereConfirmacion: boolean; alerta: { media: number; n: number } };
+        assert.equal(payload.requiereConfirmacion, true);
+        assert.equal(payload.alerta.n, 5);
+        assert.ok(Math.abs(payload.alerta.media - 101) < 1e-9);
+        assert.equal(created, false);
+      });
+
+      it("saves it, with the alert, once the surveyor confirms", async () => {
+        let received: Record<string, unknown> | undefined;
+        const c = withHistory({
+          create: async (data: Record<string, unknown>) => {
+            received = data;
+            return data;
+          },
+        });
+
+        const res = await invoke(c.create, { body: { ...body, valor: 500, confirmarDesvio: true } }, ENCUESTADOR);
+
+        assert.equal(res.statusCode, 201);
+        assert.ok(received?.["alerta"]);
+      });
+
+      it("saves a usual price without an alert", async () => {
+        let received: Record<string, unknown> | undefined;
+        const c = withHistory({
+          create: async (data: Record<string, unknown>) => {
+            received = data;
+            return data;
+          },
+        });
+
+        const res = await invoke(c.create, { body: { ...body, valor: 103 } }, ENCUESTADOR);
+
+        assert.equal(res.statusCode, 201);
+        assert.equal(received?.["alerta"], null);
+      });
+
+      it("does not judge a promotional price", async () => {
+        const res = await invoke(withHistory().create, { body: { ...body, valor: 500, oferta: true } }, ENCUESTADOR);
+
+        assert.equal(res.statusCode, 201);
+      });
+
+      it("looks at the history of the same producto and commerce before this relevamiento", async () => {
+        let args: unknown[] = [];
+        const c = controller({
+          precios: {
+            historial: async (...a: unknown[]) => {
+              args = a;
+              return [];
+            },
+            create: async (d: object) => d,
+          },
+        });
+
+        await invoke(c.create, { body }, ENCUESTADOR);
+
+        assert.deepEqual(args, [ID, ID, FECHA_INICIO]);
+      });
     });
 
     it("answers 404 for a missing relevamiento and 409 for a CERRADO one", async () => {
@@ -179,6 +265,14 @@ describe("precio controller", () => {
       assert.deepEqual(captured.page, { limit: 20, offset: 40 });
     });
 
+    it("lists only the confirmed deviations when asked", async () => {
+      const { c, captured } = listController();
+
+      await invoke(c.list, { query: { conAlerta: "true" } }, ANALISTA);
+
+      assert.deepEqual(captured.filter, { conAlerta: true });
+    });
+
     it("filters by oferta as a boolean", async () => {
       const { c, captured } = listController();
 
@@ -227,7 +321,27 @@ describe("precio controller", () => {
       );
 
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(args, [ID, { valor: 99, observacion: "ok", oferta: true }, { userId: ME, role: "ENCUESTADOR" }]);
+      assert.deepEqual(args, [ID, { valor: 99, observacion: "ok", oferta: true, alerta: null }, { userId: ME, role: "ENCUESTADOR" }]);
+    });
+
+    it("clears the observacion when it comes empty, blank or null", async () => {
+      for (const observacion of ["", "   ", null]) {
+        let changes: unknown;
+        const c = controller({
+          precios: {
+            findById: async () => precio,
+            update: async (_id: string, c: unknown) => {
+              changes = c;
+              return { valor: 1 };
+            },
+          },
+        });
+
+        const res = await invoke(c.update, { params: { id: ID }, body: { observacion } }, ENCUESTADOR);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(changes, { observacion: null });
+      }
     });
 
     it("answers 404 when the precio belongs to someone else", async () => {
@@ -270,6 +384,72 @@ describe("precio controller", () => {
       assert.deepEqual(args, [ID, { userId: ME, role: "ENCUESTADOR" }]);
     });
 
+    it("also deletes the stored files of the precio's attachments", async () => {
+      const removed: string[] = [];
+      const c = controller({
+        precios: { findById: async () => precio, remove: async () => precio },
+        adjuntos: { listByPrecio: async () => [{ clave: "a.jpg" }, { clave: "b.pdf" }] },
+        storage: {
+          remove: async (key: string) => {
+            removed.push(key);
+          },
+        },
+      });
+
+      const res = await invoke(c.remove, { params: { id: ID } }, ENCUESTADOR);
+
+      assert.equal(res.statusCode, 204);
+      assert.deepEqual(removed, ["a.jpg", "b.pdf"]);
+    });
+
+    it("still answers 204 when a stored file cannot be removed", async () => {
+      const c = controller({
+        precios: { findById: async () => precio, remove: async () => precio },
+        adjuntos: { listByPrecio: async () => [{ clave: "a.jpg" }] },
+        storage: {
+          remove: async () => {
+            throw new Error("disk error");
+          },
+        },
+      });
+
+      assert.equal((await invoke(c.remove, { params: { id: ID } }, ENCUESTADOR)).statusCode, 204);
+    });
+
+    describe("analista correction", () => {
+      const other = { ...precio, encuestador: OTHER };
+
+      it("lets an analista correct another surveyor's precio even after the asignacion is COMPLETADA", async () => {
+        let args: unknown[] = [];
+        const c = controller({
+          precios: {
+            findById: async () => other,
+            update: async (...a: unknown[]) => {
+              args = a;
+              return { valor: 50 };
+            },
+          },
+          asignaciones: { hasEnCurso: async () => false },
+        });
+
+        const res = await invoke(c.update, { params: { id: ID }, body: { valor: 50 } }, ANALISTA);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(args, [ID, { valor: 50, alerta: null }, { userId: "an-1", role: "ANALISTA" }]);
+      });
+
+      it("is frozen once the relevamiento is CERRADO, and cannot delete", async () => {
+        const closed = controller({
+          precios: { findById: async () => other },
+          relevamientos: { findById: async () => ({ estado: "CERRADO" }) },
+        });
+        const owned = controller({ precios: { findById: async () => other } });
+
+        assert.equal((await invoke(closed.update, { params: { id: ID }, body: { valor: 50 } }, ANALISTA)).statusCode, 409);
+        assert.equal((await invoke(owned.remove, { params: { id: ID } }, ANALISTA)).statusCode, 404);
+      });
+    });
+
     describe("supervisor correction", () => {
       const other = { ...precio, encuestador: OTHER };
 
@@ -289,7 +469,7 @@ describe("precio controller", () => {
         const res = await invoke(c.update, { params: { id: ID }, body: { valor: 50 } }, SUPERVISOR);
 
         assert.equal(res.statusCode, 200);
-        assert.deepEqual(args, [ID, { valor: 50 }, { userId: "sup-1", role: "SUPERVISOR" }]);
+        assert.deepEqual(args, [ID, { valor: 50, alerta: null }, { userId: "sup-1", role: "SUPERVISOR" }]);
       });
 
       it("still answers 409 once the relevamiento is CERRADO", async () => {
@@ -318,6 +498,86 @@ describe("precio controller", () => {
 
         assert.equal(res.statusCode, 404);
       });
+    });
+  });
+
+  describe("anterior", () => {
+    const query = { relevamiento: ID, comercio: ID, producto: ID };
+    const previous = { valor: 1450.5, periodo: "2026-09", oferta: true, fechaRelevamiento: new Date("2026-09-12T12:00:00Z") };
+    const FECHA = new Date("2026-10-01T00:00:00Z");
+
+    it("answers the previous price before the relevamiento, whoever loaded it", async () => {
+      let args: unknown[] = [];
+      const c = controller({
+        relevamientos: { findById: async () => ({ id: ID, estado: "ABIERTO", fechaInicio: FECHA }) },
+        asignaciones: { list: async () => [{ id: "a1" }] },
+        precios: {
+          anterior: async (...a: unknown[]) => {
+            args = a;
+            return previous;
+          },
+        },
+      });
+
+      const res = await invoke(c.anterior, { query }, ENCUESTADOR);
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.body, { valor: 1450.5, periodo: "2026-09", oferta: true });
+      assert.deepEqual(args, [ID, ID, FECHA]);
+    });
+
+    it("answers 204 when there is no previous price", async () => {
+      const c = controller({
+        relevamientos: { findById: async () => ({ id: ID, fechaInicio: FECHA }) },
+        asignaciones: { list: async () => [{ id: "a1" }] },
+        precios: { anterior: async () => null },
+      });
+
+      const res = await invoke(c.anterior, { query }, ENCUESTADOR);
+
+      assert.equal(res.statusCode, 204);
+      assert.equal(res.ended, true);
+    });
+
+    it("lets a surveyor ask only for a commerce they are assigned to in that relevamiento", async () => {
+      let asked: unknown;
+      const c = controller({
+        relevamientos: { findById: async () => ({ id: ID, fechaInicio: FECHA }) },
+        asignaciones: {
+          list: async (filter: unknown) => {
+            asked = filter;
+            return [];
+          },
+        },
+        precios: { anterior: async () => previous },
+      });
+
+      const res = await invoke(c.anterior, { query }, ENCUESTADOR);
+
+      assert.equal(res.statusCode, 404);
+      assert.deepEqual(asked, { relevamiento: ID, comercio: ID, encuestador: ME });
+    });
+
+    it("does not restrict the other roles by assignment", async () => {
+      const c = controller({
+        relevamientos: { findById: async () => ({ id: ID, fechaInicio: FECHA }) },
+        asignaciones: {
+          list: async () => {
+            throw new Error("must not be consulted");
+          },
+        },
+        precios: { anterior: async () => previous },
+      });
+
+      assert.equal((await invoke(c.anterior, { query }, SUPERVISOR)).statusCode, 200);
+      assert.equal((await invoke(c.anterior, { query }, ANALISTA)).statusCode, 200);
+    });
+
+    it("answers 400 on an invalid query and 404 for an unknown relevamiento", async () => {
+      const missing = controller({ relevamientos: { findById: async () => null } });
+
+      assert.equal((await invoke(controller().anterior, { query: { comercio: ID } }, ENCUESTADOR)).statusCode, 400);
+      assert.equal((await invoke(missing.anterior, { query }, ENCUESTADOR)).statusCode, 404);
     });
   });
 });

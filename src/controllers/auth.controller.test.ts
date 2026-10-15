@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
 import { verifyToken } from "../auth/token.service.js";
 import { type UserRepository } from "../repositories/user.repository.js";
-import { invoke } from "../testing/http.js";
+import { authLocals, invoke } from "../testing/http.js";
 import { createAuthController } from "./auth.controller.js";
 
 const CONFIG = { secret: "test-secret", expiresIn: "1h" } as const;
@@ -84,5 +84,71 @@ describe("auth controller login", () => {
     assert.equal(calls.touched[0]?.[0], USER_ID);
     assert.ok(calls.touched[0]?.[1] instanceof Date);
     assert.equal("passwordHash" in body.user, false);
+  });
+});
+
+describe("auth controller me and changePassword", () => {
+  const ME = authLocals(USER_ID, "COORDINADOR");
+
+  function controller(repo: object) {
+    return createAuthController(repo as UserRepository, CONFIG);
+  }
+
+  it("me returns the profile of the authenticated user without the hash", async () => {
+    const repo = { findById: async () => fakeUser({ email: "ana@example.com", dni: "1", legajo: "L" }) };
+
+    const res = await invoke(controller(repo).me, {}, ME);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal((res.body as { id: string }).id, USER_ID);
+    assert.equal("passwordHash" in (res.body as object), false);
+  });
+
+  it("me answers 404 when the account no longer exists", async () => {
+    const res = await invoke(controller({ findById: async () => null }).me, {}, ME);
+
+    assert.equal(res.statusCode, 404);
+  });
+
+  it("changePassword stores the new hash when the current password matches", async () => {
+    let args: unknown[] = [];
+    const repo = {
+      findById: async () => fakeUser(),
+      update: async (...a: unknown[]) => {
+        args = a;
+        return fakeUser();
+      },
+    };
+
+    const res = await invoke(
+      controller(repo).changePassword,
+      { body: { currentPassword: PASSWORD, newPassword: "a-brand-new-password" } },
+      ME,
+    );
+
+    assert.equal(res.statusCode, 204);
+    const [id, changes] = args as [string, { passwordHash: string }];
+    assert.equal(id, USER_ID);
+    assert.ok(await bcrypt.compare("a-brand-new-password", changes.passwordHash));
+  });
+
+  it("changePassword answers 400 when the current password is wrong and stores nothing", async () => {
+    let updated = false;
+    const repo = {
+      findById: async () => fakeUser(),
+      update: async () => {
+        updated = true;
+        return fakeUser();
+      },
+    };
+
+    const res = await invoke(
+      controller(repo).changePassword,
+      { body: { currentPassword: "wrong", newPassword: "a-brand-new-password" } },
+      ME,
+    );
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(updated, false);
   });
 });

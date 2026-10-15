@@ -36,9 +36,16 @@ export const NIVEL_VARIEDAD = 6;
 export const CATEGORIAS_CANASTA = ["NUCLEO", "ESTACIONAL", "REGULADO"] as const;
 export const ESTADOS_CANASTA = ["ACTIVO", "INACTIVO"] as const;
 
-export const ACCIONES_AUDITORIA = ["CREACION", "MODIFICACION", "ELIMINACION"] as const;
+export const ACCIONES_AUDITORIA = [
+  "CREACION",
+  "MODIFICACION",
+  "ELIMINACION",
+  "ADJUNTO_AGREGADO",
+  "ADJUNTO_ELIMINADO",
+] as const;
 
-export const ESTADOS_CALCULO = ["COMPLETADO", "FALLIDO"] as const;
+// A run is accepted as EJECUTANDO and ends COMPLETADO or FALLIDO: the engine call is asynchronous.
+export const ESTADOS_CALCULO = ["EJECUTANDO", "COMPLETADO", "FALLIDO"] as const;
 
 export type Role = (typeof ROLES)[number];
 export type EstadoUsuario = (typeof ESTADOS_USUARIO)[number];
