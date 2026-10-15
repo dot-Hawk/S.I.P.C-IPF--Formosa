@@ -29,6 +29,13 @@
       "when": 1792025585201,
       "tag": "0003_adjuntos_precio",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792030779134,
+      "tag": "0004_calculo_ejecutando",
+      "breakpoints": true
     }
   ]
 }

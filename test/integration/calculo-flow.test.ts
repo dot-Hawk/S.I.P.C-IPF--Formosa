@@ -30,6 +30,18 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
   let baseUrl: string;
   let db: typeof import("../../src/db/index.js") | undefined;
   const tokens = {} as { coord: string; analista: string; encuestador: string };
+  // Starts a run (202, EJECUTANDO) and waits until the background job ends it.
+  async function runCalculo(token: string, body: unknown) {
+    const started = await api("POST", "/api/calculos", { token, body });
+    if (started.status !== 202) return started;
+
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const current = await api("GET", `/api/calculos/${started.body.id}`, { token });
+      if (current.body.estado !== "EJECUTANDO") return { status: 202, body: current.body, startedAs: started.body };
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error("The run did not finish in time");
+  }
   let calculoId: string;
 
   async function api(method: string, path: string, options: { token?: string; body?: unknown } = {}) {
@@ -204,12 +216,10 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
   });
 
   it("runs the engine over closed relevamientos, imputes and stores the results", async () => {
-    const created = await api("POST", "/api/calculos", {
-      token: tokens.analista,
-      body: { mesBase: "2026-01", mesObjetivo: "2026-03" },
-    });
+    const created = await runCalculo(tokens.analista, { mesBase: "2026-01", mesObjetivo: "2026-03" });
 
-    assert.equal(created.status, 201);
+    assert.equal(created.status, 202);
+    assert.equal((created as { startedAs: { estado: string } }).startedAs.estado, "EJECUTANDO");
     assert.equal(created.body.estado, "COMPLETADO");
     assert.equal(created.body.motorVersion.length > 0, true);
     assert.equal(created.body.resumen.imputaciones, 1);
@@ -258,19 +268,40 @@ describe("Calculation flow (real PostgreSQL and engine)", { skip: skipReason }, 
     const { pool } = (db as NonNullable<typeof db>).getDbHandle();
     await pool.query("UPDATE precios SET oferta = true WHERE valor = 132");
 
-    const withOffers = await api("POST", "/api/calculos", {
-      token: tokens.coord,
-      body: { mesBase: "2026-01", mesObjetivo: "2026-03" },
-    });
-    const withoutOffers = await api("POST", "/api/calculos", {
-      token: tokens.coord,
-      body: { mesBase: "2026-01", mesObjetivo: "2026-03", excluirOfertas: true },
+    const withOffers = await runCalculo(tokens.coord, { mesBase: "2026-01", mesObjetivo: "2026-03" });
+    const withoutOffers = await runCalculo(tokens.coord, {
+      mesBase: "2026-01",
+      mesObjetivo: "2026-03",
+      excluirOfertas: true,
     });
 
-    assert.equal(withOffers.status, 201);
-    assert.equal(withoutOffers.status, 201);
+    assert.equal(withOffers.body.estado, "COMPLETADO");
+    assert.equal(withoutOffers.body.estado, "COMPLETADO");
     assert.notEqual(withOffers.body.entradaHash, withoutOffers.body.entradaHash);
     assert.equal(withoutOffers.body.excluirOfertas, true);
+  });
+
+  it("runs one calculation at a time and frees a run that was abandoned", async () => {
+    const { pool } = (db as NonNullable<typeof db>).getDbHandle();
+    const body = { mesBase: "2026-01", mesObjetivo: "2026-03" };
+
+    // A run that is still executing blocks a new one...
+    await pool.query(
+      `INSERT INTO calculos (mes_base, mes_objetivo, parametros, entrada_hash, estado, creado_por)
+       SELECT '2026-01', '2026-03', '{}'::jsonb, 'stuck', 'EJECUTANDO', id FROM users LIMIT 1`,
+    );
+    const busy = await api("POST", "/api/calculos", { token: tokens.analista, body });
+    assert.equal(busy.status, 409);
+    assert.match(busy.body.message, /en ejecución/);
+
+    // ...but one that has been "running" for far too long was abandoned (crash, restart).
+    await pool.query("UPDATE calculos SET created_at = now() - interval '1 hour' WHERE entrada_hash = 'stuck'");
+    const freed = await runCalculo(tokens.analista, body);
+    assert.equal(freed.body.estado, "COMPLETADO");
+
+    const stuck = await pool.query("SELECT estado, error FROM calculos WHERE entrada_hash = 'stuck'");
+    assert.equal(stuck.rows[0].estado, "FALLIDO");
+    assert.match(stuck.rows[0].error, /interrupted/);
   });
 
   it("downloads the planilla of a run for every reading role", async () => {

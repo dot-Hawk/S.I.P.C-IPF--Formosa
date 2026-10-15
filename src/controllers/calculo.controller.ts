@@ -42,8 +42,9 @@ export function createCalculoController(service: CalculoService, calculos: Calcu
       }
 
       try {
-        const calculo = await service.ejecutar(req.body, { userId: auth.userId });
-        res.status(201).json(calculo);
+        // The engine works in the background: the run is read later with GET /api/calculos/:id.
+        const { calculo } = await service.iniciar(req.body, { userId: auth.userId });
+        res.status(202).json(calculo);
       } catch (error) {
         if (error instanceof CalculoError) {
           res.status(error.status).json({ message: error.message });

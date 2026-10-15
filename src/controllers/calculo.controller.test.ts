@@ -18,12 +18,12 @@ function controller(options: { service?: object; calculos?: object } = {}) {
 
 describe("calculo controller", () => {
   describe("create", () => {
-    it("runs the calculation as the authenticated user and answers 201", async () => {
+    it("starts the calculation as the authenticated user and answers 202 with the run", async () => {
       let args: unknown[] = [];
       const service = {
-        ejecutar: async (...a: unknown[]) => {
+        iniciar: async (...a: unknown[]) => {
           args = a;
-          return { id: ID, estado: "COMPLETADO" };
+          return { calculo: { id: ID, estado: "EJECUTANDO" }, terminado: Promise.resolve() };
         },
       };
 
@@ -33,14 +33,15 @@ describe("calculo controller", () => {
         ANALISTA,
       );
 
-      assert.equal(res.statusCode, 201);
+      assert.equal(res.statusCode, 202);
+      assert.deepEqual(res.body, { id: ID, estado: "EJECUTANDO" });
       assert.deepEqual(args, [{ mesBase: "2026-01", mesObjetivo: "2026-03" }, { userId: ME }]);
     });
 
-    it("maps the service errors to their status", async () => {
-      for (const status of [409, 422, 502] as const) {
+    it("answers 409 with the reason when the run cannot start", async () => {
+      for (const status of [409] as const) {
         const service = {
-          ejecutar: async () => {
+          iniciar: async () => {
             throw new CalculoError(status, "reason");
           },
         };
@@ -54,7 +55,7 @@ describe("calculo controller", () => {
 
     it("rethrows unexpected errors", async () => {
       const service = {
-        ejecutar: async () => {
+        iniciar: async () => {
           throw new Error("connection lost");
         },
       };

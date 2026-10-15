@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, lt, sql } from "drizzle-orm";
 import { type Db } from "../db/client.js";
 import {
   calculoImputaciones,
@@ -35,12 +35,21 @@ export type ImputacionInput = Omit<NewCalculoImputacion, "calculo" | "id">;
 export interface CalculoRepository {
   relevamientosEntre(mesBase: string, mesObjetivo: string): Promise<RelevamientoDelMes[]>;
   preciosEntre(mesBase: string, mesObjetivo: string): Promise<PrecioFila[]>;
-  // The run and its results are written together: a run is either complete or absent.
-  guardar(
-    calculo: NewCalculo,
+  // Registers a run as EJECUTANDO. Only one run executes at a time (the engine recomputes the whole
+  // series, so two at once only compete), so it answers null while another is in progress. Runs
+  // that were EJECUTANDO for longer than `vencidoMs` were abandoned (crash, restart) and are
+  // failed first, so one of them can never block the system for good.
+  iniciar(calculo: Omit<NewCalculo, "estado">, vencidoMs: number): Promise<Calculo | null>;
+  // The results are written together with the new estado: a run is either complete or not.
+  completar(
+    id: string,
+    resultado: Pick<NewCalculo, "motorVersion" | "resumen">,
     relativos: RelativoInput[],
     imputaciones: ImputacionInput[],
-  ): Promise<Calculo>;
+  ): Promise<Calculo | null>;
+  fallar(id: string, error: string): Promise<void>;
+  // At boot: whatever was running died with the previous process.
+  interrumpirEjecutando(): Promise<number>;
   list(page: Page): Promise<Calculo[]>;
   findById(id: string): Promise<Calculo | null>;
   relativos(calculo: string, filter: RelativosFilter): Promise<CalculoRelativo[]>;
@@ -50,6 +59,9 @@ export interface CalculoRepository {
 }
 
 const INSERT_BATCH = 2000;
+// Serializes the "is another run executing?" check with the insert, across instances.
+const INICIAR_LOCK_KEY = 872346001;
+export const MENSAJE_INTERRUMPIDO = "The run was interrupted before it finished (the server restarted or the engine never answered)";
 
 export function createCalculoRepository(db: Db): CalculoRepository {
   // The month of a relevamiento is the first 7 characters of its periodo ("2026-10-Q1" -> "2026-10").
@@ -81,24 +93,64 @@ export function createCalculoRepository(db: Db): CalculoRepository {
         .where(and(sql`${mesDeRelevamiento} >= ${mesBase}`, sql`${mesDeRelevamiento} <= ${mesObjetivo}`));
     },
 
-    async guardar(calculo, relativos, imputaciones) {
+    async iniciar(calculo, vencidoMs) {
       return db.transaction(async (tx) => {
-        const [row] = await tx.insert(calculos).values(calculo).returning();
-        if (!row) throw new Error("Calculo insert returned no row");
+        await tx.execute(sql`select pg_advisory_xact_lock(${INICIAR_LOCK_KEY})`);
 
+        await tx
+          .update(calculos)
+          .set({ estado: "FALLIDO", error: MENSAJE_INTERRUMPIDO })
+          .where(and(eq(calculos.estado, "EJECUTANDO"), lt(calculos.createdAt, new Date(Date.now() - vencidoMs))));
+
+        const [running] = await tx
+          .select({ id: calculos.id })
+          .from(calculos)
+          .where(eq(calculos.estado, "EJECUTANDO"))
+          .limit(1);
+        if (running) return null;
+
+        const [row] = await tx
+          .insert(calculos)
+          .values({ ...calculo, estado: "EJECUTANDO" })
+          .returning();
+        if (!row) throw new Error("Calculo insert returned no row");
+        return row;
+      });
+    },
+
+    async completar(id, resultado, relativos, imputaciones) {
+      return db.transaction(async (tx) => {
         for (let i = 0; i < relativos.length; i += INSERT_BATCH) {
           await tx
             .insert(calculoRelativos)
-            .values(relativos.slice(i, i + INSERT_BATCH).map((r) => ({ ...r, calculo: row.id })));
+            .values(relativos.slice(i, i + INSERT_BATCH).map((r) => ({ ...r, calculo: id })));
         }
         for (let i = 0; i < imputaciones.length; i += INSERT_BATCH) {
           await tx
             .insert(calculoImputaciones)
-            .values(imputaciones.slice(i, i + INSERT_BATCH).map((m) => ({ ...m, calculo: row.id })));
+            .values(imputaciones.slice(i, i + INSERT_BATCH).map((m) => ({ ...m, calculo: id })));
         }
 
-        return row;
+        const [row] = await tx
+          .update(calculos)
+          .set({ ...resultado, estado: "COMPLETADO", error: null })
+          .where(eq(calculos.id, id))
+          .returning();
+        return row ?? null;
       });
+    },
+
+    async fallar(id, error) {
+      await db.update(calculos).set({ estado: "FALLIDO", error }).where(eq(calculos.id, id));
+    },
+
+    async interrumpirEjecutando() {
+      const rows = await db
+        .update(calculos)
+        .set({ estado: "FALLIDO", error: MENSAJE_INTERRUMPIDO })
+        .where(eq(calculos.estado, "EJECUTANDO"))
+        .returning({ id: calculos.id });
+      return rows.length;
     },
 
     async list(page) {
