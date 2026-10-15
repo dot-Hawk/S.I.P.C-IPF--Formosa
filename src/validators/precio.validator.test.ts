@@ -65,6 +65,14 @@ describe("validatePrecioUpdate", () => {
   it("validates the fields present", () => {
     assert.deepEqual(fields(validatePrecioUpdate({ valor: -1 })), ["valor"]);
   });
+
+  it("lets an observacion be cleared with an empty string or null, but not misused", () => {
+    assert.equal(validatePrecioUpdate({ observacion: "" }).valid, true);
+    assert.equal(validatePrecioUpdate({ observacion: "   " }).valid, true);
+    assert.equal(validatePrecioUpdate({ observacion: null }).valid, true);
+    assert.deepEqual(fields(validatePrecioUpdate({ observacion: "x".repeat(501) })), ["observacion"]);
+    assert.deepEqual(fields(validatePrecioUpdate({ observacion: 5 })), ["observacion"]);
+  });
 });
 
 describe("validatePrecioFilters", () => {

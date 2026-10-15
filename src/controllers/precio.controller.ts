@@ -181,7 +181,11 @@ export function createPrecioController(repos: PrecioRepositories) {
 
       const changes: PrecioChanges = {};
       if (req.body.valor !== undefined) changes.valor = req.body.valor;
-      if (req.body.observacion !== undefined) changes.observacion = req.body.observacion.trim();
+      if (req.body.observacion !== undefined) {
+        // An empty, blank or null observacion clears it.
+        const text = typeof req.body.observacion === "string" ? req.body.observacion.trim() : "";
+        changes.observacion = text === "" ? null : text;
+      }
       if (req.body.oferta !== undefined) changes.oferta = req.body.oferta;
 
       // A new value (or turning a promotion off) is judged again against the history.

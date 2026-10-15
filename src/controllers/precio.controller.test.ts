@@ -324,6 +324,26 @@ describe("precio controller", () => {
       assert.deepEqual(args, [ID, { valor: 99, observacion: "ok", oferta: true, alerta: null }, { userId: ME, role: "ENCUESTADOR" }]);
     });
 
+    it("clears the observacion when it comes empty, blank or null", async () => {
+      for (const observacion of ["", "   ", null]) {
+        let changes: unknown;
+        const c = controller({
+          precios: {
+            findById: async () => precio,
+            update: async (_id: string, c: unknown) => {
+              changes = c;
+              return { valor: 1 };
+            },
+          },
+        });
+
+        const res = await invoke(c.update, { params: { id: ID }, body: { observacion } }, ENCUESTADOR);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(changes, { observacion: null });
+      }
+    });
+
     it("answers 404 when the precio belongs to someone else", async () => {
       const c = controller({ precios: { findById: async () => ({ ...precio, encuestador: OTHER }) } });
 

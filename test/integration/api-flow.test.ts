@@ -419,6 +419,16 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
 
     const edited = await api("PATCH", `/api/precios/${state.precioId}`, { token: a.token, body: { valor: 1300 } });
     assert.equal(edited.body.valor, 1300);
+
+    // The observacion can be set and then cleared (the surveyor app sends an empty string).
+    const noted = await api("PATCH", `/api/precios/${state.precioId}`, {
+      token: a.token,
+      body: { observacion: "  marca distinta  " },
+    });
+    assert.equal(noted.body.observacion, "marca distinta");
+    const cleared = await api("PATCH", `/api/precios/${state.precioId}`, { token: a.token, body: { observacion: "" } });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.observacion, null);
     assert.equal(
       (await api("PATCH", `/api/precios/${state.precioId}`, { token: b.token, body: { valor: 1 } })).status,
       404,
@@ -516,12 +526,15 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     };
     assert.deepEqual(
       history.body.map((entry: { accion: string }) => entry.accion),
-      ["MODIFICACION", "MODIFICACION", "CREACION"],
+      // newest first: supervisor correction, observacion cleared, observacion set, valor edit, creation
+      ["MODIFICACION", "MODIFICACION", "MODIFICACION", "MODIFICACION", "CREACION"],
     );
     assert.equal(history.body[0].rol, "SUPERVISOR");
     assert.equal(history.body[0].anterior.valor, 1300);
     assert.equal(history.body[0].posterior.valor, 1250);
-    assert.equal(history.body[2].anterior, null);
+    assert.equal(history.body[1].anterior.observacion, "marca distinta");
+    assert.equal(history.body[1].posterior.observacion, null);
+    assert.equal(history.body[4].anterior, null);
     assert.equal((await api("GET", "/api/auditoria/precios", { token: a.token })).status, 403);
 
     // The analista corrects too (but cannot delete: removal stays with the owner).
