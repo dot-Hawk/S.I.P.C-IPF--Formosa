@@ -1,4 +1,4 @@
-import { and, count, desc, eq, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, ne, type SQL } from "drizzle-orm";
 import { type Db } from "../db/client.js";
 import { asignaciones, type Asignacion, type NewAsignacion } from "../db/schema.js";
 import { type EstadoAsignacion } from "../domain/enums.js";
@@ -9,6 +9,8 @@ export interface AsignacionFilter {
   encuestador?: string;
   comercio?: string;
   estado?: EstadoAsignacion;
+  // Rows in this estado are left out (a surveyor never sees CANCELADA visits).
+  excludeEstado?: EstadoAsignacion;
 }
 
 export interface AsignacionRepository {
@@ -30,6 +32,7 @@ function filterConditions(filter: AsignacionFilter): SQL | undefined {
     filter.encuestador !== undefined ? eq(asignaciones.encuestador, filter.encuestador) : undefined,
     filter.comercio !== undefined ? eq(asignaciones.comercio, filter.comercio) : undefined,
     filter.estado !== undefined ? eq(asignaciones.estado, filter.estado) : undefined,
+    filter.excludeEstado !== undefined ? ne(asignaciones.estado, filter.excludeEstado) : undefined,
   );
 }
 

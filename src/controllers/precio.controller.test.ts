@@ -555,7 +555,7 @@ describe("precio controller", () => {
       const res = await invoke(c.anterior, { query }, ENCUESTADOR);
 
       assert.equal(res.statusCode, 404);
-      assert.deepEqual(asked, { relevamiento: ID, comercio: ID, encuestador: ME });
+      assert.deepEqual(asked, { relevamiento: ID, comercio: ID, encuestador: ME, excludeEstado: "CANCELADA" });
     });
 
     it("does not restrict the other roles by assignment", async () => {

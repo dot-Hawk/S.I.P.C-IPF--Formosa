@@ -91,6 +91,7 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     producto2Id: string;
     relevamientoId: string;
     asignacionId: string;
+    liveAsignacionId: string;
     precioId: string;
   };
 
@@ -486,6 +487,54 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     assert.equal(attachmentEvents[1].usuario, a.id);
   });
 
+  it("cancels an asignacion, frees the comercio and shuts the surveyor out", async () => {
+    const { coord, a, b } = state;
+    const comercio = await api("POST", "/api/comercios", {
+      token: coord.token,
+      body: { nombre: "Super Cancelado", direccion: "Calle 2", zona: "Norte", tipo: "ALMACEN" },
+    });
+    assert.equal(comercio.status, 201);
+    const base = { relevamiento: state.relevamientoId, comercio: comercio.body.id };
+
+    const created = await api("POST", "/api/asignaciones", { token: coord.token, body: { ...base, encuestador: a.id } });
+    assert.equal(created.status, 201);
+    const url = `/api/asignaciones/${created.body.id}`;
+    assert.equal((await api("PATCH", `${url}/estado`, { token: a.token, body: { estado: "EN_CURSO" } })).status, 200);
+
+    // Only a coordinator cancels, and the generic estado endpoint cannot reach CANCELADA.
+    assert.equal((await api("PATCH", `${url}/cancelar`, { token: a.token })).status, 403);
+    assert.equal((await api("PATCH", `${url}/estado`, { token: a.token, body: { estado: "CANCELADA" } })).status, 400);
+    assert.equal((await api("PATCH", "/api/asignaciones/not-a-uuid/cancelar", { token: coord.token })).status, 400);
+    const unknown = "00000000-0000-4000-8000-000000000099";
+    assert.equal((await api("PATCH", `/api/asignaciones/${unknown}/cancelar`, { token: coord.token })).status, 404);
+
+    const cancelled = await api("PATCH", `${url}/cancelar`, { token: coord.token });
+    assert.equal(cancelled.status, 200);
+    assert.equal(cancelled.body.estado, "CANCELADA");
+    const again = await api("PATCH", `${url}/cancelar`, { token: coord.token });
+    assert.equal(again.status, 409);
+    assert.equal(again.body.code, "ASIGNACION_NOT_CANCELABLE");
+
+    // The surveyor can neither work on it nor see it; the coordinator keeps the history.
+    const precio = { ...base, producto: state.productoId, valor: 99 };
+    assert.equal((await api("POST", "/api/precios", { token: a.token, body: precio })).status, 403);
+    assert.equal((await api("PATCH", `${url}/estado`, { token: a.token, body: { estado: "EN_CURSO" } })).status, 404);
+    assert.equal((await api("GET", url, { token: a.token })).status, 404);
+    assert.equal((await api("GET", "/api/asignaciones", { token: a.token })).body.length, 1);
+    assert.equal((await api("GET", "/api/asignaciones?estado=CANCELADA", { token: a.token })).body.length, 0);
+    const history = await api("GET", "/api/asignaciones?estado=CANCELADA", { token: coord.token });
+    assert.equal(history.body.length, 1);
+    assert.equal((await api("GET", url, { token: coord.token })).body.estado, "CANCELADA");
+
+    // The comercio is free again: for another surveyor, and the live one blocks a further duplicate.
+    const reassigned = await api("POST", "/api/asignaciones", { token: coord.token, body: { ...base, encuestador: b.id } });
+    assert.equal(reassigned.status, 201);
+    const duplicate = await api("POST", "/api/asignaciones", { token: coord.token, body: { ...base, encuestador: a.id } });
+    assert.equal(duplicate.status, 409);
+    assert.equal(duplicate.body.code, "COMERCIO_ALREADY_ASSIGNED");
+    state.liveAsignacionId = reassigned.body.id;
+  });
+
   it("freezes data after completion and closing", async () => {
     const { coord, a, b } = state;
 
@@ -552,6 +601,12 @@ describe("API flow (real PostgreSQL)", { skip: skipReason }, () => {
     assert.equal((await api("PATCH", closeUrl, { token: a.token })).status, 403);
     assert.equal((await api("PATCH", closeUrl, { token: coord.token })).body.estado, "CERRADO");
     assert.equal((await api("PATCH", closeUrl, { token: coord.token })).status, 409);
+
+    const lateCancel = await api("PATCH", `/api/asignaciones/${state.liveAsignacionId}/cancelar`, {
+      token: coord.token,
+    });
+    assert.equal(lateCancel.status, 409);
+    assert.equal(lateCancel.body.code, "RELEVAMIENTO_NOT_ABIERTO");
 
     const lateAssignment = await api("POST", "/api/asignaciones", {
       token: coord.token,
