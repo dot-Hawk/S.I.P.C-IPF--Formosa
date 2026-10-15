@@ -32,11 +32,14 @@ export function validateAsignacionReassign(input: Record<string, unknown>): Vali
   return result(errors);
 }
 
+// CANCELADA is not a target here: it is reached only through the coordinator's cancellation endpoint.
+const ESTADOS_SETTABLE = ESTADOS_ASIGNACION.filter((e) => e !== "CANCELADA");
+
 export function validateAsignacionEstado(input: Record<string, unknown>): ValidationResult {
   const errors: ValidationError[] = [];
 
-  if (!ESTADOS_ASIGNACION.some((e) => e === input["estado"])) {
-    errors.push({ field: "estado", message: `estado must be one of: ${ESTADOS_ASIGNACION.join(", ")}` });
+  if (!ESTADOS_SETTABLE.some((e) => e === input["estado"])) {
+    errors.push({ field: "estado", message: `estado must be one of: ${ESTADOS_SETTABLE.join(", ")}` });
   }
 
   return result(errors);
