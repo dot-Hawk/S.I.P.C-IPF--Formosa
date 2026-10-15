@@ -14,7 +14,9 @@ services:
   engine:
     build: ./engine
     environment:
-      ENGINE_API_KEY: ${ENGINE_API_KEY:?set ENGINE_API_KEY}
+      # Empty by default so `docker compose up -d db` works without it; the engine answers 503 to
+      # every call until a key is set.
+      ENGINE_API_KEY: ${ENGINE_API_KEY:-}
     ports:
       - "8000:8000"
 

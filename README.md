@@ -48,6 +48,7 @@ See `.env.example` for the full list.
 | `npm run db:generate` | Generate a new migration after editing `src/db/schema.ts`. |
 | `npm run seed:coordinador` | Create the first `COORDINADOR` user. |
 | `npm run import:canasta -- <dir>` | Import the basket from the official workbooks (see below). |
+| `npm run dev:bootstrap` | Local only: create the coordinator (`SEED_EMAIL`, `SEED_PASSWORD`) and sample data through the API (a test surveyor, the current month's relevamiento, 3 comercios, 5 productos and their asignaciones). Idempotent. |
 | `npm test` | Unit tests. No database needed. |
 | `npm run test:integration` | Full API flow against a real PostgreSQL. |
 | `npm run typecheck` | Type-check without emitting. |
