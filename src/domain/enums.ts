@@ -36,7 +36,13 @@ export const NIVEL_VARIEDAD = 6;
 export const CATEGORIAS_CANASTA = ["NUCLEO", "ESTACIONAL", "REGULADO"] as const;
 export const ESTADOS_CANASTA = ["ACTIVO", "INACTIVO"] as const;
 
-export const ACCIONES_AUDITORIA = ["CREACION", "MODIFICACION", "ELIMINACION"] as const;
+export const ACCIONES_AUDITORIA = [
+  "CREACION",
+  "MODIFICACION",
+  "ELIMINACION",
+  "ADJUNTO_AGREGADO",
+  "ADJUNTO_ELIMINADO",
+] as const;
 
 export const ESTADOS_CALCULO = ["COMPLETADO", "FALLIDO"] as const;
 

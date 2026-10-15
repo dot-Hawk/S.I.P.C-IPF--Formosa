@@ -1,8 +1,7 @@
 import { type Request, type Response } from "express";
 import { type AuthPayload } from "../auth/token.service.js";
-import { type Precio, type Relevamiento } from "../db/schema.js";
 import { evaluarDesvio, type Alerta } from "../domain/desvio.js";
-import { AUTH_LOCALS_KEY } from "../middlewares/authenticate.middleware.js";
+import { type AdjuntoRepository } from "../repositories/adjunto.repository.js";
 import { type AsignacionRepository } from "../repositories/asignacion.repository.js";
 import {
   type Actor,
@@ -13,6 +12,8 @@ import {
 } from "../repositories/precio.repository.js";
 import { type ProductoRepository } from "../repositories/producto.repository.js";
 import { type RelevamientoRepository } from "../repositories/relevamiento.repository.js";
+import { createPrecioAccess, getAuth } from "./precio-access.js";
+import { type AttachmentStorage } from "../storage/attachment-storage.js";
 import { isUniqueViolation } from "../utils/db-errors.js";
 import { isUuid } from "../utils/uuid.js";
 import { DEFAULT_PAGE_SIZE, validatePrecioFilters } from "../validators/precio.validator.js";
@@ -22,67 +23,19 @@ export interface PrecioRepositories {
   relevamientos: RelevamientoRepository;
   asignaciones: AsignacionRepository;
   productos: ProductoRepository;
+  // The stored files of a deleted precio go with it.
+  adjuntos: AdjuntoRepository;
+  storage: AttachmentStorage;
 }
 
 const FILTER_FIELDS = ["relevamiento", "comercio", "producto", "encuestador"] as const;
-
-function getAuth(res: Response): AuthPayload | undefined {
-  return res.locals[AUTH_LOCALS_KEY] as AuthPayload | undefined;
-}
 
 function toActor(auth: AuthPayload): Actor {
   return { userId: auth.userId, role: auth.role };
 }
 
 export function createPrecioController(repos: PrecioRepositories) {
-  function isVisibleTo(precio: Precio, auth: AuthPayload): boolean {
-    return auth.role !== "ENCUESTADOR" || precio.encuestador === auth.userId;
-  }
-
-  // Shared guard for editing or deleting. The owner may act while the relevamiento is open
-  // and the asignacion is still EN_CURSO. With `allowSupervisor`, a SUPERVISOR may act on any
-  // precio (also after the asignacion is COMPLETADA) but still only while the relevamiento is
-  // open, since closing freezes the data. Responds and returns null when not allowed.
-  async function loadEditable(
-    req: Request,
-    res: Response,
-    { allowSupervisor = false } = {},
-  ): Promise<{ precio: Precio; auth: AuthPayload; relevamiento: Relevamiento } | null> {
-    const auth = getAuth(res);
-    if (!auth) {
-      res.status(401).json({ message: "Authentication required" });
-      return null;
-    }
-
-    const id = req.params["id"];
-    if (!isUuid(id)) {
-      res.status(400).json({ message: "Invalid precio id" });
-      return null;
-    }
-
-    const asSupervisor = allowSupervisor && auth.role === "SUPERVISOR";
-
-    const precio = await repos.precios.findById(id);
-    if (!precio || (!asSupervisor && precio.encuestador !== auth.userId)) {
-      res.status(404).json({ message: "Precio not found" });
-      return null;
-    }
-
-    const relevamiento = await repos.relevamientos.findById(precio.relevamiento);
-    if (!relevamiento || relevamiento.estado !== "ABIERTO") {
-      res.status(409).json({ message: "Relevamiento is not ABIERTO" });
-      return null;
-    }
-
-    if (asSupervisor) return { precio, auth, relevamiento };
-
-    if (!(await repos.asignaciones.hasEnCurso(precio.relevamiento, precio.comercio, auth.userId))) {
-      res.status(409).json({ message: "The asignacion is no longer EN_CURSO" });
-      return null;
-    }
-
-    return { precio, auth, relevamiento };
-  }
+  const { isVisibleTo, loadEditable } = createPrecioAccess(repos);
 
   // The warning asks the surveyor to double-check; it never blocks a price that is confirmed.
   function alertaRequerida(res: Response, alerta: Alerta): void {
@@ -265,10 +218,21 @@ export function createPrecioController(repos: PrecioRepositories) {
       const loaded = await loadEditable(req, res);
       if (!loaded) return;
 
+      // The rows disappear with the precio (cascade), so the keys are read first.
+      const adjuntos = await repos.adjuntos.listByPrecio(loaded.precio.id);
+
       const removed = await repos.precios.remove(loaded.precio.id, toActor(loaded.auth));
       if (!removed) {
         res.status(404).json({ message: "Precio not found" });
         return;
+      }
+
+      for (const { clave } of adjuntos) {
+        try {
+          await repos.storage.remove(clave);
+        } catch (error) {
+          console.error(`Could not remove stored file ${clave}`, error);
+        }
       }
 
       res.status(204).end();

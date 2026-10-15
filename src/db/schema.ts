@@ -217,6 +217,34 @@ export interface PrecioSnapshot {
   fechaRelevamiento: string;
 }
 
+export interface AdjuntoDetalle {
+  adjunto: string;
+  mime: string;
+  bytes: number;
+  sha256: string;
+}
+
+// Photo or scan of the receipt that supports a precio. The bytes live in the attachment storage;
+// `clave` is the key to find them there.
+export const precioAdjuntos = pgTable(
+  "precio_adjuntos",
+  {
+    id: id(),
+    precio: uuid("precio_id")
+      .notNull()
+      .references(() => precios.id, { onDelete: "cascade" }),
+    clave: text("clave").notNull().unique(),
+    mime: text("mime").notNull(),
+    bytes: integer("bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    subidoPor: uuid("subido_por_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [index("precio_adjuntos_precio_idx").on(t.precio)],
+);
+
 // Append-only record of what happened to a precio. It keeps the values, so it stays meaningful
 // after the precio itself is deleted: the ids are plain columns on purpose.
 export const precioAuditoria = pgTable(
@@ -234,6 +262,8 @@ export const precioAuditoria = pgTable(
     rol: text("rol").notNull(),
     anterior: jsonb("anterior").$type<PrecioSnapshot>(),
     posterior: jsonb("posterior").$type<PrecioSnapshot>(),
+    // What an attachment event is about; the precio snapshots do not change in those.
+    detalle: jsonb("detalle").$type<AdjuntoDetalle>(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   },
   (t) => [
@@ -339,6 +369,8 @@ export type Asignacion = typeof asignaciones.$inferSelect;
 export type NewAsignacion = typeof asignaciones.$inferInsert;
 export type Precio = typeof precios.$inferSelect;
 export type NewPrecio = typeof precios.$inferInsert;
+export type PrecioAdjunto = typeof precioAdjuntos.$inferSelect;
+export type NewPrecioAdjunto = typeof precioAdjuntos.$inferInsert;
 export type PrecioAuditoria = typeof precioAuditoria.$inferSelect;
 export type NewPrecioAuditoria = typeof precioAuditoria.$inferInsert;
 export type Calculo = typeof calculos.$inferSelect;

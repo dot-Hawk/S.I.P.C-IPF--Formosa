@@ -1,5 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { type AttachmentStorage } from "../storage/attachment-storage.js";
+import { type AdjuntoRepository } from "../repositories/adjunto.repository.js";
 import { type AsignacionRepository } from "../repositories/asignacion.repository.js";
 import { type PrecioRepository } from "../repositories/precio.repository.js";
 import { type ProductoRepository } from "../repositories/producto.repository.js";
@@ -20,6 +22,8 @@ interface Repos {
   relevamientos: object;
   asignaciones: object;
   productos: object;
+  adjuntos: object;
+  storage: object;
 }
 
 function controller(overrides: Partial<Repos> = {}) {
@@ -27,6 +31,8 @@ function controller(overrides: Partial<Repos> = {}) {
     relevamientos: { findById: async () => ({ estado: "ABIERTO", fechaInicio: FECHA_INICIO }) },
     asignaciones: { hasEnCurso: async () => true },
     productos: { findById: async () => ({ estado: "ACTIVO" }) },
+    adjuntos: { listByPrecio: async () => [] },
+    storage: { remove: async () => undefined },
     ...overrides,
     // Without history nothing is judged, unless a test provides one.
     precios: { historial: async () => [], ...overrides.precios },
@@ -37,6 +43,8 @@ function controller(overrides: Partial<Repos> = {}) {
     relevamientos: repos.relevamientos as RelevamientoRepository,
     asignaciones: repos.asignaciones as AsignacionRepository,
     productos: repos.productos as ProductoRepository,
+    adjuntos: repos.adjuntos as AdjuntoRepository,
+    storage: repos.storage as AttachmentStorage,
   });
 }
 
@@ -354,6 +362,38 @@ describe("precio controller", () => {
       assert.equal(res.statusCode, 204);
       assert.equal(res.ended, true);
       assert.deepEqual(args, [ID, { userId: ME, role: "ENCUESTADOR" }]);
+    });
+
+    it("also deletes the stored files of the precio's attachments", async () => {
+      const removed: string[] = [];
+      const c = controller({
+        precios: { findById: async () => precio, remove: async () => precio },
+        adjuntos: { listByPrecio: async () => [{ clave: "a.jpg" }, { clave: "b.pdf" }] },
+        storage: {
+          remove: async (key: string) => {
+            removed.push(key);
+          },
+        },
+      });
+
+      const res = await invoke(c.remove, { params: { id: ID } }, ENCUESTADOR);
+
+      assert.equal(res.statusCode, 204);
+      assert.deepEqual(removed, ["a.jpg", "b.pdf"]);
+    });
+
+    it("still answers 204 when a stored file cannot be removed", async () => {
+      const c = controller({
+        precios: { findById: async () => precio, remove: async () => precio },
+        adjuntos: { listByPrecio: async () => [{ clave: "a.jpg" }] },
+        storage: {
+          remove: async () => {
+            throw new Error("disk error");
+          },
+        },
+      });
+
+      assert.equal((await invoke(c.remove, { params: { id: ID } }, ENCUESTADOR)).statusCode, 204);
     });
 
     describe("supervisor correction", () => {

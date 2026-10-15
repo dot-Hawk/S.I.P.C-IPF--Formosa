@@ -5,10 +5,12 @@ export interface FakeResponse {
   statusCode: number;
   body: unknown;
   ended: boolean;
+  headers: Record<string, string>;
   locals: Record<string, unknown>;
   status(code: number): FakeResponse;
   json(payload: unknown): FakeResponse;
-  end(): FakeResponse;
+  end(payload?: unknown): FakeResponse;
+  setHeader(name: string, value: string): FakeResponse;
 }
 
 export function fakeResponse(locals: Record<string, unknown> = {}): FakeResponse {
@@ -16,6 +18,7 @@ export function fakeResponse(locals: Record<string, unknown> = {}): FakeResponse
     statusCode: 200,
     body: undefined,
     ended: false,
+    headers: {},
     locals,
     status(code) {
       res.statusCode = code;
@@ -25,8 +28,13 @@ export function fakeResponse(locals: Record<string, unknown> = {}): FakeResponse
       res.body = payload;
       return res;
     },
-    end() {
+    end(payload) {
       res.ended = true;
+      if (payload !== undefined) res.body = payload;
+      return res;
+    },
+    setHeader(name, value) {
+      res.headers[name.toLowerCase()] = value;
       return res;
     },
   };

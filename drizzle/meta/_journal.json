@@ -22,6 +22,13 @@
       "when": 1792021191259,
       "tag": "0002_alerta_precio",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792025585201,
+      "tag": "0003_adjuntos_precio",
+      "breakpoints": true
     }
   ]
 }

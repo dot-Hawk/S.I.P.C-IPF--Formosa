@@ -31,6 +31,7 @@ See `.env.example` for the full list.
 | `JWT_EXPIRES_IN` | no | Token lifetime. Defaults to `8h`. |
 | `TRUST_PROXY` | no | Number of proxy hops to trust. Set it when running behind a reverse proxy so rate limiting sees the real client IP. |
 | `SEED_NOMBRE`, `SEED_APELLIDO`, `SEED_DNI`, `SEED_LEGAJO`, `SEED_EMAIL`, `SEED_PASSWORD` | seed only | Data for the first coordinator user. |
+| `UPLOADS_DIR` | no | Directory where receipt attachments are stored. Defaults to `./uploads` (git-ignored). Back it up together with the database. |
 | `ENGINE_URL` | for calculations | Base URL of the calculation engine (`engine/`). The API boots without it; `POST /api/calculos` answers `502` until it is set. |
 | `ENGINE_API_KEY` | for calculations | Key sent to the engine in `X-API-Key`. Must be the engine's own `ENGINE_API_KEY`. |
 | `ENGINE_TIMEOUT_MS` | no | How long to wait for the engine. Defaults to 120000. |
@@ -108,6 +109,7 @@ All routes are under `/api`. Errors are JSON and never include stack traces. Res
 | `/api/productos` | Product catalog. |
 | `/api/asignaciones` | Surveyor assignments and state transitions. |
 | `/api/precios` | Price capture and queries (`oferta=true\|false` filter). |
+| `/api/precios/:id/adjuntos` | Receipt photos/scans of a price: upload (raw body), list, download, delete. |
 | `/api/auditoria/precios` | Audit trail of prices (not available to `ENCUESTADOR`). |
 | `/api/calculos` | Run the calculation engine over closed relevamientos; read runs, relatives and imputations. |
 
@@ -129,6 +131,7 @@ All routes are under `/api`. Errors are JSON and never include stack traces. Res
 - **Price warning:** a new price (or a new value) is compared with the history of the same producto in the same commerce in earlier relevamientos, promotions excluded. With at least 3 observations, it is flagged when it is farther from the mean than 3 standard deviations, and never for less than 10% of the mean. The flag is a warning, not a rejection: `POST`/`PATCH /api/precios` answers `409` with `requiereConfirmacion` and the `alerta` (mean, deviation, usual range); resend it with `confirmarDesvio: true` to save it, and it is stored with its `alerta`. Promotional prices are not judged. `GET /api/precios?conAlerta=true` lists the confirmed ones for review.
 - **Calculation:** `POST /api/calculos` (`ANALISTA`, `COORDINADOR`) takes `mesBase` and `mesObjetivo` and recalculates the whole series between them. Every month of the range must have relevamientos and all of them must be `CERRADO` (`409` otherwise), so a run can be reproduced from its inputs. Prices of one variedad in one commerce and month are averaged; `excluirOfertas` leaves promotional prices out. Each run is stored with its parameters, a hash of the input, the engine version, the relatives and the imputations; it is never edited. Reads (`GET /api/calculos`, `/:id`, `/:id/relativos`, `/:id/imputaciones`) are open to `SUPERVISOR`, `ANALISTA`, `COORDINADOR` and `DIRECCION`.
 - **Login rate limit:** only failed attempts count; 5 per IP+email and 30 per IP every 15 minutes, then `429` with `Retry-After`. Counters live in memory, so they reset on restart and are not shared between instances.
+- **Attachments:** a price can carry up to 5 receipt files (JPEG, PNG, WebP or PDF, 5 MB each). `POST /api/precios/:id/adjuntos` takes the file as the raw request body; the type is decided from the bytes, not from the declared `Content-Type` (`415` otherwise, `413` over the limit). Only the owner surveyor can add or remove them, under the same conditions as editing the price (relevamiento `ABIERTO`, asignacion `EN_CURSO`). Reading follows the price's visibility, and downloads are sent as `attachment`, `nosniff` and uncached. Adding and removing leave `ADJUNTO_AGREGADO` / `ADJUNTO_ELIMINADO` entries in the audit trail (with file size and SHA-256). Files live on local disk behind the `AttachmentStorage` interface (`src/storage/`); moving to an object store means another implementation of it.
 
 ## Project layout
 
@@ -159,4 +162,5 @@ test/integration/   End-to-end flow against PostgreSQL
 - No `helmet` or CORS configuration yet (add when the frontend exists).
 - Quality changes (`Camb.Calidad`) are not modelled: the original scripts took them from the INDEC export and this system has no equivalent yet. See `engine/README.md`.
 - The relatives are per variedad. Aggregation to products, classes and groups needs the formula confirmed with the statisticians.
+- Attachments are stored on the server's local disk: with several backend instances they need a shared volume or an object-store implementation of `AttachmentStorage`.
 - The calculation runs synchronously inside the request (about 15 s for a year of real data).
