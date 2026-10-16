@@ -1,6 +1,7 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { type Db } from "../db/client.js";
 import { relevamientos, type NewRelevamiento, type Relevamiento } from "../db/schema.js";
+import { type Page } from "./precio.repository.js";
 
 export type RelevamientoInput = Pick<
   NewRelevamiento,
@@ -9,7 +10,9 @@ export type RelevamientoInput = Pick<
 
 export interface RelevamientoRepository {
   create(data: RelevamientoInput): Promise<Relevamiento>;
-  list(): Promise<Relevamiento[]>;
+  // Every row when no page is given.
+  list(page?: Page): Promise<Relevamiento[]>;
+  count(): Promise<number>;
   findById(id: string): Promise<Relevamiento | null>;
   // Single atomic update: only an ABIERTO relevamiento can transition, even under concurrent requests.
   closeIfOpen(id: string): Promise<Relevamiento | null>;
@@ -23,8 +26,17 @@ export function createRelevamientoRepository(db: Db): RelevamientoRepository {
       return row;
     },
 
-    async list() {
-      return db.select().from(relevamientos).orderBy(desc(relevamientos.fechaInicio));
+    async list(page) {
+      const query = db
+        .select()
+        .from(relevamientos)
+        .orderBy(desc(relevamientos.fechaInicio), desc(relevamientos.id));
+      return page ? query.limit(page.limit).offset(page.offset) : query;
+    },
+
+    async count() {
+      const [row] = await db.select({ total: count() }).from(relevamientos);
+      return row?.total ?? 0;
     },
 
     async findById(id) {

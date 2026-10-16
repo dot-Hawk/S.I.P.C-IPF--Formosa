@@ -36,6 +36,13 @@
       "when": 1792030779134,
       "tag": "0004_calculo_ejecutando",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792077945431,
+      "tag": "0005_asignacion_cancelada",
+      "breakpoints": true
     }
   ]
 }

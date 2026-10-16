@@ -63,12 +63,47 @@ describe("relevamiento controller", () => {
   });
 
   describe("list", () => {
-    it("returns what the repository lists", async () => {
+    it("returns every row and the total when there is no page or limit", async () => {
       const items = [{ periodo: "2026-10" }];
+      let received: unknown[] = [];
+      const repo = {
+        list: async (...a: unknown[]) => {
+          received = a;
+          return items;
+        },
+        count: async () => 7,
+      };
 
-      const res = await invoke(controller({ list: async () => items }).list, {});
+      const res = await invoke(controller(repo).list, { query: {} });
 
       assert.deepEqual(res.body, items);
+      assert.deepEqual(received, [undefined]);
+      assert.equal(res.headers["x-total-count"], "7");
+    });
+
+    it("pages only when page or limit is given", async () => {
+      let received: unknown[] = [];
+      const repo = {
+        list: async (...a: unknown[]) => {
+          received = a;
+          return [];
+        },
+        count: async () => 30,
+      };
+
+      await invoke(controller(repo).list, { query: { page: "3", limit: "10" } });
+
+      assert.deepEqual(received, [{ limit: 10, offset: 20 }]);
+    });
+
+    it("answers 400 on an invalid page or limit", async () => {
+      const res = await invoke(controller({}).list, { query: { page: "0", limit: "abc" } });
+
+      assert.equal(res.statusCode, 400);
+      assert.deepEqual(
+        (res.body as { errors: { field: string }[] }).errors.map((e) => e.field),
+        ["page", "limit"],
+      );
     });
   });
 

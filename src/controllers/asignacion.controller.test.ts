@@ -5,6 +5,7 @@ import { type ComercioRepository } from "../repositories/comercio.repository.js"
 import { type RelevamientoRepository } from "../repositories/relevamiento.repository.js";
 import { type UserRepository } from "../repositories/user.repository.js";
 import { authLocals, invoke } from "../testing/http.js";
+import { ERROR_CODES } from "../domain/error-codes.js";
 import { createAsignacionController } from "./asignacion.controller.js";
 
 const ID = "00000000-0000-4000-8000-000000000011";
@@ -64,7 +65,9 @@ describe("asignacion controller", () => {
       const closed = controller({ relevamientos: { findById: async () => ({ estado: "CERRADO" }) } });
 
       assert.equal((await invoke(missing.create, { body }, COORDINADOR)).statusCode, 404);
-      assert.equal((await invoke(closed.create, { body }, COORDINADOR)).statusCode, 409);
+      const conflict = await invoke(closed.create, { body }, COORDINADOR);
+      assert.equal(conflict.statusCode, 409);
+      assert.equal((conflict.body as { code: string }).code, ERROR_CODES.RELEVAMIENTO_NOT_ABIERTO);
     });
 
     it("answers 404 for a missing encuestador and 400 for one that is not an ACTIVO ENCUESTADOR", async () => {
@@ -96,18 +99,25 @@ describe("asignacion controller", () => {
         },
       });
 
-      assert.equal((await invoke(c.create, { body }, COORDINADOR)).statusCode, 409);
+      const res = await invoke(c.create, { body }, COORDINADOR);
+      assert.equal(res.statusCode, 409);
+      assert.equal((res.body as { code: string }).code, ERROR_CODES.COMERCIO_ALREADY_ASSIGNED);
     });
   });
 
   describe("list", () => {
     function listController() {
-      const captured: { filter?: unknown } = {};
+      const captured: { filter?: unknown; page?: unknown; counted?: unknown } = {};
       const c = controller({
         asignaciones: {
-          list: async (f: unknown) => {
+          list: async (f: unknown, page: unknown) => {
             captured.filter = f;
+            captured.page = page;
             return [];
+          },
+          count: async (f: unknown) => {
+            captured.counted = f;
+            return 12;
           },
         },
       });
@@ -128,12 +138,67 @@ describe("asignacion controller", () => {
       assert.deepEqual(captured.filter, { relevamiento: ID, estado: "PENDIENTE" });
     });
 
+    it("returns everything when there is no page, with the filtered total in X-Total-Count", async () => {
+      const { c, captured } = listController();
+
+      const res = await invoke(c.list, { query: { estado: "PENDIENTE" } }, COORDINADOR);
+
+      assert.equal(captured.page, undefined);
+      assert.deepEqual(captured.counted, { estado: "PENDIENTE" });
+      assert.equal(res.headers["x-total-count"], "12");
+    });
+
+    it("pages when page or limit is given and rejects invalid values", async () => {
+      const { c, captured } = listController();
+
+      await invoke(c.list, { query: { page: "2", limit: "5" } }, COORDINADOR);
+      assert.deepEqual(captured.page, { limit: 5, offset: 5 });
+
+      const res = await invoke(c.list, { query: { limit: "0" } }, COORDINADOR);
+      assert.equal(res.statusCode, 400);
+    });
+
     it("forces the own id for an ENCUESTADOR, ignoring a different one in the query", async () => {
       const { c, captured } = listController();
 
       await invoke(c.list, { query: { encuestador: OTHER } }, ENCUESTADOR);
 
-      assert.deepEqual(captured.filter, { encuestador: ENC });
+      assert.deepEqual(captured.filter, { encuestador: ENC, excludeEstado: "CANCELADA" });
+      assert.deepEqual(captured.counted, { encuestador: ENC, excludeEstado: "CANCELADA" });
+    });
+  });
+
+  describe("cancelled visits and ENCUESTADOR", () => {
+    it("excludes CANCELADA from the list and the total of an ENCUESTADOR only", async () => {
+      const seen: unknown[] = [];
+      const c = controller({
+        asignaciones: {
+          list: async (f: unknown) => {
+            seen.push(f);
+            return [];
+          },
+          count: async (f: unknown) => {
+            seen.push(f);
+            return 0;
+          },
+        },
+      });
+
+      await invoke(c.list, { query: {} }, ENCUESTADOR);
+      await invoke(c.list, { query: {} }, COORDINADOR);
+
+      assert.deepEqual(seen[0], { encuestador: ENC, excludeEstado: "CANCELADA" });
+      assert.deepEqual(seen[1], { encuestador: ENC, excludeEstado: "CANCELADA" });
+      assert.deepEqual(seen[2], {});
+      assert.deepEqual(seen[3], {});
+    });
+
+    it("hides an own CANCELADA asignacion behind a 404 for the ENCUESTADOR, not for the COORDINADOR", async () => {
+      const cancelled = { id: ID, encuestador: ENC, estado: "CANCELADA", relevamiento: ID };
+      const c = controller({ asignaciones: { findById: async () => cancelled } });
+
+      assert.equal((await invoke(c.getById, { params: { id: ID } }, ENCUESTADOR)).statusCode, 404);
+      assert.equal((await invoke(c.getById, { params: { id: ID } }, COORDINADOR)).statusCode, 200);
     });
   });
 
@@ -179,6 +244,7 @@ describe("asignacion controller", () => {
       const res = await invoke(c.setEstado, { params: { id: ID }, body: { estado: "COMPLETADA" } }, ENCUESTADOR);
 
       assert.equal(res.statusCode, 409);
+      assert.equal((res.body as { code: string }).code, ERROR_CODES.INVALID_ESTADO_TRANSITION);
     });
 
     it("answers 409 when the relevamiento is CERRADO", async () => {
@@ -190,6 +256,7 @@ describe("asignacion controller", () => {
       const res = await invoke(c.setEstado, { params: { id: ID }, body: { estado: "EN_CURSO" } }, ENCUESTADOR);
 
       assert.equal(res.statusCode, 409);
+      assert.equal((res.body as { code: string }).code, ERROR_CODES.RELEVAMIENTO_NOT_ABIERTO);
     });
 
     it("answers 409 when it was modified concurrently", async () => {
@@ -200,6 +267,7 @@ describe("asignacion controller", () => {
       const res = await invoke(c.setEstado, { params: { id: ID }, body: { estado: "EN_CURSO" } }, ENCUESTADOR);
 
       assert.equal(res.statusCode, 409);
+      assert.equal((res.body as { code: string }).code, ERROR_CODES.ASIGNACION_CONCURRENT_MODIFICATION);
     });
 
     it("answers 404 for another encuestador's asignacion", async () => {
@@ -208,6 +276,70 @@ describe("asignacion controller", () => {
       const res = await invoke(c.setEstado, { params: { id: ID }, body: { estado: "EN_CURSO" } }, ENCUESTADOR);
 
       assert.equal(res.statusCode, 404);
+    });
+  });
+
+  describe("cancel", () => {
+    const live = { id: ID, encuestador: ENC, estado: "EN_CURSO", relevamiento: ID };
+
+    it("cancels a PENDIENTE or EN_CURSO asignacion conditioned on the estado it read", async () => {
+      for (const estado of ["PENDIENTE", "EN_CURSO"]) {
+        let args: unknown[] = [];
+        const c = controller({
+          asignaciones: {
+            findById: async () => ({ ...live, estado }),
+            transitionEstado: async (...a: unknown[]) => {
+              args = a;
+              return { ...live, estado: "CANCELADA" };
+            },
+          },
+        });
+
+        const res = await invoke(c.cancel, { params: { id: ID } }, COORDINADOR);
+
+        assert.equal(res.statusCode, 200);
+        assert.equal((res.body as { estado: string }).estado, "CANCELADA");
+        assert.deepEqual(args, [ID, estado, "CANCELADA"]);
+      }
+    });
+
+    it("answers 400 on an invalid id and 404 on an unknown one", async () => {
+      const c = controller({ asignaciones: { findById: async () => null } });
+
+      assert.equal((await invoke(c.cancel, { params: { id: "x" } }, COORDINADOR)).statusCode, 400);
+      assert.equal((await invoke(c.cancel, { params: { id: ID } }, COORDINADOR)).statusCode, 404);
+    });
+
+    it("answers 409 ASIGNACION_NOT_CANCELABLE for COMPLETADA and CANCELADA", async () => {
+      for (const estado of ["COMPLETADA", "CANCELADA"]) {
+        const c = controller({ asignaciones: { findById: async () => ({ ...live, estado }) } });
+
+        const res = await invoke(c.cancel, { params: { id: ID } }, COORDINADOR);
+
+        assert.equal(res.statusCode, 409);
+        assert.equal((res.body as { code: string }).code, ERROR_CODES.ASIGNACION_NOT_CANCELABLE);
+      }
+    });
+
+    it("answers 409 when the relevamiento is not ABIERTO", async () => {
+      const c = controller({
+        asignaciones: { findById: async () => live },
+        relevamientos: { findById: async () => ({ estado: "CERRADO" }) },
+      });
+
+      const res = await invoke(c.cancel, { params: { id: ID } }, COORDINADOR);
+
+      assert.equal(res.statusCode, 409);
+      assert.equal((res.body as { code: string }).code, ERROR_CODES.RELEVAMIENTO_NOT_ABIERTO);
+    });
+
+    it("answers 409 when it was modified concurrently", async () => {
+      const c = controller({ asignaciones: { findById: async () => live, transitionEstado: async () => null } });
+
+      const res = await invoke(c.cancel, { params: { id: ID } }, COORDINADOR);
+
+      assert.equal(res.statusCode, 409);
+      assert.equal((res.body as { code: string }).code, ERROR_CODES.ASIGNACION_CONCURRENT_MODIFICATION);
     });
   });
 
@@ -237,6 +369,8 @@ describe("asignacion controller", () => {
         asignaciones: { reassignIfPendiente: async () => null, findById: async () => null },
       });
 
+      const conflict = await invoke(notPending.reassign, { params: { id: ID }, body: { encuestador: ENC } }, COORDINADOR);
+      assert.equal((conflict.body as { code: string }).code, ERROR_CODES.ASIGNACION_NOT_PENDIENTE);
       assert.equal(
         (await invoke(notPending.reassign, { params: { id: ID }, body: { encuestador: ENC } }, COORDINADOR))
           .statusCode,

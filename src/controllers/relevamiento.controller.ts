@@ -2,6 +2,7 @@ import { type Request, type Response } from "express";
 import { type RelevamientoRepository } from "../repositories/relevamiento.repository.js";
 import { isUniqueViolation } from "../utils/db-errors.js";
 import { isUuid } from "../utils/uuid.js";
+import { parsePage, validatePagination } from "../validators/pagination.js";
 
 export function createRelevamientoController(relevamientos: RelevamientoRepository) {
   return {
@@ -26,8 +27,21 @@ export function createRelevamientoController(relevamientos: RelevamientoReposito
       }
     },
 
-    async list(_req: Request, res: Response): Promise<void> {
-      res.json(await relevamientos.list());
+    // Returns every row unless page or limit is given; X-Total-Count is always the full total.
+    async list(req: Request, res: Response): Promise<void> {
+      const errors = validatePagination(req.query);
+      if (errors.length > 0) {
+        res.status(400).json({ errors });
+        return;
+      }
+
+      const paged = req.query["page"] !== undefined || req.query["limit"] !== undefined;
+      const [found, total] = await Promise.all([
+        relevamientos.list(paged ? parsePage(req.query) : undefined),
+        relevamientos.count(),
+      ]);
+      res.setHeader("X-Total-Count", String(total));
+      res.json(found);
     },
 
     async getById(req: Request, res: Response): Promise<void> {

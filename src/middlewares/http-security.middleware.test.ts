@@ -52,6 +52,12 @@ describe("http security middleware", () => {
     assert.match(res.headers.get("access-control-expose-headers") ?? "", /Content-Disposition/i);
   });
 
+  it("exposes the total count header of the paginated lists", async () => {
+    const res = await fetch(`${base}/ping`, { headers: { origin: "https://app.example.com" } });
+
+    assert.match(res.headers.get("access-control-expose-headers") ?? "", /X-Total-Count/i);
+  });
+
   it("gives no CORS permission to an unknown origin", async () => {
     const res = await fetch(`${base}/ping`, { headers: { origin: "https://evil.example.com" } });
 

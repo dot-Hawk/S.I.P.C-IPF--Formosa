@@ -2,14 +2,17 @@ import bcrypt from "bcryptjs";
 import { type Request, type Response } from "express";
 import { type User } from "../db/schema.js";
 import { AUTH_LOCALS_KEY } from "../middlewares/authenticate.middleware.js";
-import { type UserChanges, type UserFilter, type UserRepository } from "../repositories/user.repository.js";
-import { isUniqueViolation } from "../utils/db-errors.js";
+import { LastCoordinadorError, type UserChanges, type UserFilter, type UserRepository } from "../repositories/user.repository.js";
+import { ERROR_CODES } from "../domain/error-codes.js";
+import { isUniqueViolation, uniqueViolationColumns } from "../utils/db-errors.js";
 import { isUuid } from "../utils/uuid.js";
 import { parsePage, validatePagination } from "../validators/pagination.js";
 import { validateUserFilters } from "../validators/user.validator.js";
 
 const BCRYPT_ROUNDS = 10;
-const EDITABLE_FIELDS = ["nombre", "apellido", "dni", "legajo", "role"] as const;
+const UNIQUE_FIELDS = ["dni", "legajo", "email"] as const;
+const TEXT_FIELDS = ["nombre", "apellido", "dni", "legajo"] as const;
+const EDITABLE_FIELDS = [...TEXT_FIELDS, "role"] as const;
 
 // Never exposes the password hash.
 export function toUserView(user: User) {
@@ -26,6 +29,34 @@ export function toUserView(user: User) {
   };
 }
 
+// The 409 of a uniqueness collision, naming the field(s) that collided when the driver says so.
+function duplicateUserBody(error: unknown) {
+  const columns = uniqueViolationColumns(error);
+  return {
+    message: "A user with this dni, legajo or email already exists",
+    code: ERROR_CODES.USER_DUPLICATE,
+    errors: UNIQUE_FIELDS.filter((field) => columns.includes(field)).map((field) => ({
+      field,
+      message: `A user with this ${field} already exists`,
+    })),
+  };
+}
+
+// The 409 of a change that would leave the system without an active coordinador.
+function lastCoordinadorBody() {
+  return { message: "The system cannot be left without an active coordinador", code: ERROR_CODES.LAST_COORDINADOR };
+}
+
+// Copies the given fields that are present, trimming strings; shared by create and update.
+function trimmedFields<K extends string>(body: Record<string, unknown>, fields: readonly K[]) {
+  const picked: Partial<Record<K, unknown>> = {};
+  for (const field of fields) {
+    const value = body[field];
+    if (value !== undefined) picked[field] = typeof value === "string" ? value.trim() : value;
+  }
+  return picked;
+}
+
 function callerId(res: Response): string | undefined {
   return (res.locals[AUTH_LOCALS_KEY] as { userId?: string } | undefined)?.userId;
 }
@@ -33,7 +64,11 @@ function callerId(res: Response): string | undefined {
 export function createUserController(users: UserRepository) {
   return {
     async create(req: Request, res: Response): Promise<void> {
-      const { nombre, apellido, dni, legajo, email, password, role } = req.body;
+      const { email, password, role } = req.body;
+      const { nombre, apellido, dni, legajo } = trimmedFields(req.body, TEXT_FIELDS) as Record<
+        (typeof TEXT_FIELDS)[number],
+        string
+      >;
 
       try {
         const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
@@ -48,19 +83,10 @@ export function createUserController(users: UserRepository) {
           estado: "ACTIVO",
         });
 
-        res.status(201).json({
-          id: user.id,
-          nombre: user.nombre,
-          apellido: user.apellido,
-          dni: user.dni,
-          legajo: user.legajo,
-          email: user.email,
-          role: user.role,
-          estado: user.estado,
-        });
+        res.status(201).json(toUserView(user));
       } catch (error) {
         if (isUniqueViolation(error)) {
-          res.status(409).json({ message: "A user with this dni, legajo or email already exists" });
+          res.status(409).json(duplicateUserBody(error));
           return;
         }
         throw error;
@@ -82,7 +108,8 @@ export function createUserController(users: UserRepository) {
         ...(typeof estado === "string" ? { estado: estado as NonNullable<UserFilter["estado"]> } : {}),
       };
 
-      const found = await users.list(filter, parsePage(req.query));
+      const [found, total] = await Promise.all([users.list(filter, parsePage(req.query)), users.count(filter)]);
+      res.setHeader("X-Total-Count", String(total));
       res.json(found.map(toUserView));
     },
 
@@ -115,11 +142,7 @@ export function createUserController(users: UserRepository) {
         return;
       }
 
-      const changes: UserChanges = {};
-      for (const field of EDITABLE_FIELDS) {
-        const value = req.body[field];
-        if (value !== undefined) (changes as Record<string, unknown>)[field] = typeof value === "string" ? value.trim() : value;
-      }
+      const changes: UserChanges = trimmedFields(req.body, EDITABLE_FIELDS) as UserChanges;
       if (req.body.email !== undefined) changes.email = String(req.body.email).trim().toLowerCase();
 
       try {
@@ -130,8 +153,12 @@ export function createUserController(users: UserRepository) {
         }
         res.json(toUserView(user));
       } catch (error) {
+        if (error instanceof LastCoordinadorError) {
+          res.status(409).json(lastCoordinadorBody());
+          return;
+        }
         if (isUniqueViolation(error)) {
-          res.status(409).json({ message: "A user with this dni, legajo or email already exists" });
+          res.status(409).json(duplicateUserBody(error));
           return;
         }
         throw error;
@@ -151,13 +178,21 @@ export function createUserController(users: UserRepository) {
         return;
       }
 
-      const user = await users.update(id, { estado: req.body.estado });
-      if (!user) {
-        res.status(404).json({ message: "User not found" });
-        return;
-      }
+      try {
+        const user = await users.update(id, { estado: req.body.estado });
+        if (!user) {
+          res.status(404).json({ message: "User not found" });
+          return;
+        }
 
-      res.json(toUserView(user));
+        res.json(toUserView(user));
+      } catch (error) {
+        if (error instanceof LastCoordinadorError) {
+          res.status(409).json(lastCoordinadorBody());
+          return;
+        }
+        throw error;
+      }
     },
 
     async resetPassword(req: Request, res: Response): Promise<void> {

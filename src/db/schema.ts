@@ -172,7 +172,12 @@ export const asignaciones = pgTable(
     ...timestamps,
   },
   (t) => [
-    unique("asignaciones_relevamiento_comercio_uq").on(t.relevamiento, t.comercio),
+    // A cancelled asignacion frees its comercio, so only the live ones count. The predicate lists the
+    // live estados instead of `<> 'CANCELADA'`: Postgres cannot use an enum value in the same
+    // transaction that adds it, and the migration runner applies everything in one.
+    uniqueIndex("asignaciones_relevamiento_comercio_uq")
+      .on(t.relevamiento, t.comercio)
+      .where(sql`${t.estado} in ('PENDIENTE', 'EN_CURSO', 'COMPLETADA')`),
     index("asignaciones_encuestador_idx").on(t.encuestador),
   ],
 );

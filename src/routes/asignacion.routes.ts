@@ -37,6 +37,7 @@ asignacionRouter.patch(
   validateBody(validateAsignacionEstado),
   controller.setEstado,
 );
+asignacionRouter.patch("/:id/cancelar", authorize("COORDINADOR"), controller.cancel);
 asignacionRouter.patch(
   "/:id/encuestador",
   authorize("COORDINADOR"),

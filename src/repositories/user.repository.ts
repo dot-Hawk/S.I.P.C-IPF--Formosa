@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, count, eq, type SQL } from "drizzle-orm";
 import { type Db } from "../db/client.js";
 import { users, type NewUser, type User } from "../db/schema.js";
 import { type EstadoUsuario, type Role } from "../domain/enums.js";
@@ -13,6 +13,14 @@ export type UserChanges = Partial<
   Pick<NewUser, "nombre" | "apellido" | "dni" | "legajo" | "email" | "role" | "estado" | "passwordHash">
 >;
 
+// Thrown by `update` when the change would leave the system without an ACTIVO COORDINADOR.
+export class LastCoordinadorError extends Error {
+  constructor() {
+    super("The system cannot be left without an active coordinador");
+    this.name = "LastCoordinadorError";
+  }
+}
+
 export interface UserRepository {
   findById(id: string): Promise<User | null>;
   findByEmail(email: string): Promise<User | null>;
@@ -20,8 +28,18 @@ export interface UserRepository {
   create(data: NewUser): Promise<User>;
   touchLastAccess(id: string, at: Date): Promise<void>;
   list(filter: UserFilter, page: Page): Promise<User[]>;
-  // Null when the user does not exist.
+  // Total of users matching the filter, regardless of the page.
+  count(filter: UserFilter): Promise<number>;
+  // Null when the user does not exist. Throws LastCoordinadorError when the change would remove the
+  // last ACTIVO COORDINADOR.
   update(id: string, changes: UserChanges): Promise<User | null>;
+}
+
+function filterConditions(filter: UserFilter): SQL | undefined {
+  return and(
+    filter.role !== undefined ? eq(users.role, filter.role) : undefined,
+    filter.estado !== undefined ? eq(users.estado, filter.estado) : undefined,
+  );
 }
 
 export function createUserRepository(db: Db): UserRepository {
@@ -55,22 +73,44 @@ export function createUserRepository(db: Db): UserRepository {
       return db
         .select()
         .from(users)
-        .where(
-          and(
-            filter.role !== undefined ? eq(users.role, filter.role) : undefined,
-            filter.estado !== undefined ? eq(users.estado, filter.estado) : undefined,
-          ),
-        )
+        .where(filterConditions(filter))
         .orderBy(asc(users.apellido), asc(users.nombre), asc(users.id))
         .limit(page.limit)
         .offset(page.offset);
     },
 
+    async count(filter) {
+      const [row] = await db.select({ total: count() }).from(users).where(filterConditions(filter));
+      return row?.total ?? 0;
+    },
+
     async update(id, changes) {
       if (Object.keys(changes).length === 0) return this.findById(id);
 
-      const [row] = await db.update(users).set(changes).where(eq(users.id, id)).returning();
-      return row ?? null;
+      const reducesCoordinadores =
+        (changes.role !== undefined && changes.role !== "COORDINADOR") ||
+        (changes.estado !== undefined && changes.estado !== "ACTIVO");
+      if (!reducesCoordinadores) {
+        const [row] = await db.update(users).set(changes).where(eq(users.id, id)).returning();
+        return row ?? null;
+      }
+
+      return db.transaction(async (tx) => {
+        // Locking every active coordinador (in id order, so two writers cannot deadlock) makes the
+        // count and the write one atomic step: a concurrent change waits here and then sees the
+        // committed state, so two coordinadores cannot deactivate each other at the same time.
+        const active = await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.role, "COORDINADOR"), eq(users.estado, "ACTIVO")))
+          .orderBy(asc(users.id))
+          .for("update");
+
+        if (active.length === 1 && active[0]?.id === id) throw new LastCoordinadorError();
+
+        const [row] = await tx.update(users).set(changes).where(eq(users.id, id)).returning();
+        return row ?? null;
+      });
     },
   };
 }

@@ -184,6 +184,7 @@ export function createPrecioController(repos: PrecioRepositories) {
           relevamiento: relevamientoId,
           comercio,
           encuestador: auth.userId,
+          excludeEstado: "CANCELADA",
         });
         if (assigned.length === 0) {
           res.status(404).json({ message: "Asignacion not found" });

@@ -19,7 +19,7 @@ export const ESTADOS_COMERCIO = ["ACTIVO", "INACTIVO"] as const;
 export const UNIDADES_PRODUCTO = ["KG", "G", "LT", "ML", "UNIDAD"] as const;
 export const ESTADOS_PRODUCTO = ["ACTIVO", "INACTIVO"] as const;
 
-export const ESTADOS_ASIGNACION = ["PENDIENTE", "EN_CURSO", "COMPLETADA"] as const;
+export const ESTADOS_ASIGNACION = ["PENDIENTE", "EN_CURSO", "COMPLETADA", "CANCELADA"] as const;
 
 // Level 0 is the whole basket and level 6 is the variedad, the lowest level that is priced.
 export const NIVELES_CANASTA = [

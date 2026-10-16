@@ -19,8 +19,9 @@ export function createHttpSecurity(origins: string[]): RequestHandler[] {
       origin: origins,
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
       allowedHeaders: ["Authorization", "Content-Type"],
-      // So a browser client can read the file name of a download and the login retry delay.
-      exposedHeaders: ["Content-Disposition", "Retry-After"],
+      // So a browser client can read the file name of a download, the login retry delay and the
+      // total of a paginated list.
+      exposedHeaders: ["Content-Disposition", "Retry-After", "X-Total-Count"],
       maxAge: 600,
     }),
   ];

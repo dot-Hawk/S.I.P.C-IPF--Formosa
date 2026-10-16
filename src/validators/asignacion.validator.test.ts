@@ -50,6 +50,7 @@ describe("validateAsignacionFilters", () => {
   it("accepts no filters and valid filters", () => {
     assert.equal(validateAsignacionFilters({}).valid, true);
     assert.equal(validateAsignacionFilters({ relevamiento: ID, estado: "PENDIENTE" }).valid, true);
+    assert.equal(validateAsignacionFilters({ estado: "CANCELADA" }).valid, true);
   });
 
   it("rejects invalid ids, objects and unknown estados", () => {

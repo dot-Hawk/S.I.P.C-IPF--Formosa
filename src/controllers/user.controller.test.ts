@@ -1,8 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
-import { type UserRepository } from "../repositories/user.repository.js";
+import { LastCoordinadorError, type UserRepository } from "../repositories/user.repository.js";
 import { authLocals, invoke } from "../testing/http.js";
+import { ERROR_CODES } from "../domain/error-codes.js";
 import { createUserController } from "./user.controller.js";
 
 const BODY = {
@@ -40,6 +41,48 @@ describe("user controller create", () => {
     assert.equal("password" in (res.body as object), false);
   });
 
+  it("trims nombre, apellido, dni and legajo", async () => {
+    let received: Record<string, unknown> | undefined;
+    const repo = {
+      create: async (data: Record<string, unknown>) => {
+        received = data;
+        return { id: "u-1", ...data };
+      },
+    };
+
+    await create(repo as unknown as Partial<UserRepository>, {
+      ...BODY,
+      nombre: " Ana ",
+      apellido: "\tPerez ",
+      dni: " 30123456 ",
+      legajo: " L-100 ",
+    });
+
+    assert.equal(received?.["nombre"], "Ana");
+    assert.equal(received?.["apellido"], "Perez");
+    assert.equal(received?.["dni"], "30123456");
+    assert.equal(received?.["legajo"], "L-100");
+  });
+
+  it("answers with the same view as the other endpoints, ultimoAcceso included", async () => {
+    const stored = { id: "u-1", ...BODY, passwordHash: "x", estado: "ACTIVO", ultimoAcceso: null };
+    const repo = { create: async () => stored };
+
+    const res = await create(repo as unknown as Partial<UserRepository>);
+
+    assert.deepEqual(res.body, {
+      id: "u-1",
+      nombre: "Ana",
+      apellido: "Perez",
+      dni: "30123456",
+      legajo: "L-100",
+      email: "ana@example.com",
+      role: "ANALISTA",
+      estado: "ACTIVO",
+      ultimoAcceso: null,
+    });
+  });
+
   it("stores the email trimmed and lowercase", async () => {
     let received: Record<string, unknown> | undefined;
     const repo = {
@@ -52,6 +95,26 @@ describe("user controller create", () => {
     await create(repo as unknown as Partial<UserRepository>, { ...BODY, email: "  Ana@Example.COM " });
 
     assert.equal(received?.["email"], "ana@example.com");
+  });
+
+  it("answers 409 with a stable code and the colliding field", async () => {
+    for (const field of ["dni", "legajo", "email"]) {
+      const repo = {
+        create: async () => {
+          throw Object.assign(new Error("Failed query"), {
+            cause: { code: "23505", detail: `Key (${field})=(x) already exists.` },
+          });
+        },
+      };
+
+      const res = await create(repo as unknown as Partial<UserRepository>);
+
+      assert.equal(res.statusCode, 409);
+      const body = res.body as { message: string; code: string; errors: { field: string; message: string }[] };
+      assert.equal(body.code, ERROR_CODES.USER_DUPLICATE);
+      assert.equal(body.errors.length, 1);
+      assert.equal(body.errors[0]?.field, field);
+    }
   });
 
   it("answers 409 on duplicate dni, legajo or email", async () => {
@@ -99,10 +162,15 @@ describe("user controller management", () => {
   describe("list", () => {
     it("lists users without their password hash, passing the filters and the page", async () => {
       let received: unknown[] = [];
+      let counted: unknown;
       const repo = {
         list: async (...a: unknown[]) => {
           received = a;
           return [STORED];
+        },
+        count: async (filter: unknown) => {
+          counted = filter;
+          return 42;
         },
       };
 
@@ -114,6 +182,8 @@ describe("user controller management", () => {
 
       assert.equal(res.statusCode, 200);
       assert.deepEqual(received, [{ role: "ANALISTA", estado: "ACTIVO" }, { limit: 10, offset: 10 }]);
+      assert.deepEqual(counted, { role: "ANALISTA", estado: "ACTIVO" });
+      assert.equal(res.headers["x-total-count"], "42");
       assert.equal("passwordHash" in (res.body as object[])[0]!, false);
     });
 
@@ -178,6 +248,38 @@ describe("user controller management", () => {
       assert.equal((await invoke(missing.update, { params: { id: TARGET }, body: { nombre: "A" } }, COORD)).statusCode, 404);
       assert.equal((await invoke(duplicated.update, { params: { id: TARGET }, body: { dni: "1" } }, COORD)).statusCode, 409);
     });
+
+    it("answers 409 with the code and the colliding field", async () => {
+      const duplicated = controller({
+        update: async () => {
+          throw Object.assign(new Error("Failed query"), {
+            cause: { code: "23505", detail: "Key (legajo)=(L-1) already exists." },
+          });
+        },
+      });
+
+      const res = await invoke(duplicated.update, { params: { id: TARGET }, body: { legajo: "L-1" } }, COORD);
+
+      const body = res.body as { code: string; errors: { field: string }[] };
+      assert.equal(body.code, ERROR_CODES.USER_DUPLICATE);
+      assert.deepEqual(body.errors.map((e) => e.field), ["legajo"]);
+    });
+
+    it("answers 409 LAST_COORDINADOR when the change would leave no active coordinador", async () => {
+      const last = controller({
+        update: async () => {
+          throw new LastCoordinadorError();
+        },
+      });
+
+      const res = await invoke(last.update, { params: { id: TARGET }, body: { role: "ANALISTA" } }, COORD);
+
+      assert.equal(res.statusCode, 409);
+      assert.deepEqual(res.body, {
+        message: "The system cannot be left without an active coordinador",
+        code: ERROR_CODES.LAST_COORDINADOR,
+      });
+    });
   });
 
   describe("setEstado", () => {
@@ -202,6 +304,22 @@ describe("user controller management", () => {
 
       assert.equal(self.statusCode, 403);
       assert.equal(missing.statusCode, 404);
+    });
+
+    it("answers 409 LAST_COORDINADOR when deactivating the last active coordinador", async () => {
+      const last = controller({
+        update: async () => {
+          throw new LastCoordinadorError();
+        },
+      });
+
+      const res = await invoke(last.setEstado, { params: { id: TARGET }, body: { estado: "LICENCIA" } }, COORD);
+
+      assert.equal(res.statusCode, 409);
+      assert.deepEqual(res.body, {
+        message: "The system cannot be left without an active coordinador",
+        code: ERROR_CODES.LAST_COORDINADOR,
+      });
     });
   });
 
